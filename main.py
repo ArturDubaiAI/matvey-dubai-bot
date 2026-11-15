@@ -30,4 +30,5 @@ def telegram():
 
     return "OK"
 
-if _name_ == "_mai…
+if _name_ == "_main_":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
