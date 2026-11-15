@@ -2,7 +2,7 @@ import os
 import requests
 from flask import Flask, request
 
- app = Flask(__name__)
+app = Flask(__name__)
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 
