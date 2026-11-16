@@ -122,7 +122,7 @@ def telegram_send_audio(chat_id, text):
     """Speak Matvey's reply with a free Edge neural voice; text delivery remains primary."""
     if not TELEGRAM_API or not text:
         return
-    spoken_text = re.sub(r"\\[([^\\]]+)\\]\\((https?://[^)]+)\\)", r"\\1", str(text))
+    spoken_text = re.sub(r"\[([^\]]+)\]\((https?://[^)]+)\)", r"\1", str(text))
     spoken_text = re.sub(r"[*_\`#]", "", spoken_text).strip()
     if len(spoken_text) > 2800:
         logging.info("TTS skipped: reply is longer than the safe audio limit")
