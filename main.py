@@ -245,8 +245,25 @@ def telegram():
         logging.info("Telegram reply sent successfully for update_id=%s", data.get("update_id"))
     except requests.HTTPError as exc:
         status = getattr(exc.response, "status_code", None)
-        logging.error("Message processing HTTP error: service_status=%s", status)
-        if status == 401 and "api.openai.com" in getattr(exc.response, "url", ""):
+        response_url = getattr(exc.response, "url", "") or ""
+        if "api.openai.com" in response_url:
+            # Log only structured, non-secret error metadata; never log response text or credentials.
+            try:
+                error_data = exc.response.json().get("error", {})
+            except (ValueError, AttributeError):
+                error_data = {}
+            logging.error(
+                "OpenAI API error: http_status=%s endpoint=%s error_type=%s error_code=%s error_param=%s",
+                status,
+                getattr(exc.response, "request", None).path_url.split("?")[0]
+                if getattr(exc.response, "request", None) is not None else "unknown",
+                error_data.get("type"),
+                error_data.get("code"),
+                error_data.get("param"),
+            )
+        else:
+            logging.error("Message processing HTTP error: service_status=%s", status)
+        if status == 401 and "api.openai.com" in response_url:
             user_message = "OpenAI не принял API-ключ. Проверьте OPENAI_API_KEY в Render."
         elif status == 429 and "api.openai.com" in getattr(exc.response, "url", ""):
             user_message = "Сейчас OpenAI не может обработать запрос: проверьте баланс и лимиты API."
