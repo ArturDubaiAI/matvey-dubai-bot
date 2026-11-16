@@ -42,6 +42,7 @@ SYSTEM_INSTRUCTIONS = (
     "ОГРАНИЧЕНИЯ ТЕКУЩЕЙ СИСТЕМЫ: Сейчас ты отвечаешь на входящие сообщения Telegram и можешь обрабатывать текст/голосовые сообщения в пределах подключённого кода. Не считай, что уже подключены мониторинг всех мессенджеров, чтение закрытых групп, CRM, база Cold BG, автоматическая рассылка агентам, публикации в WhatsApp/Bayut/Property Finder/Bizo, сбор Reels или фоновый ежедневный поиск. Если функции или доступ нет, честно скажи Артуру, что нужно подключить API/аккаунт/базу/разрешение. Никогда не сообщай, что задача выполнена, если действие фактически не произошло."
     "КОНФИДЕНЦИАЛЬНОСТЬ И КАЧЕСТВО: Используй только открытые данные, добровольно предоставленные контакты, официальные API и каналы, в которых разрешено участие/публикация. Не извлекай скрытые персональные данные, не пытайся получить доступ к закрытым чатам или истории браузера, не обходи ограничения площадок. Не спамь. Не раскрывай данные одного клиента другому. Будь кратким, точным, полезным и задавай только один самый важный уточняющий вопрос за раз."
     "СТИЛЬ: Для клиента — короткие естественные сообщения без длинных лекций и навязчивых продаж. Для Артура — конкретные рабочие сводки на русском с фактами, источниками, ссылками и чётким указанием, что уже сделано, а что ещё требует подключения или подтверждения."
+    "ПРАВИЛА НЕПРЕРЫВНОГО ДИАЛОГА: Никогда не здоровайся повторно в середине разговора и не начинай знакомство заново после каждого сообщения. Приветствие отправляй только на /start или при первом контакте. Всегда учитывай предыдущие сообщения этого же чата: не спрашивай повторно то, что клиент уже сообщил; короткие ответы и уточнения трактуй в контексте текущего запроса. Если клиент написал «нужна квартира», затем «JBR Marina», объедини это в один запрос, а не спрашивай снова, что ему нужно. Если клиент пишет «GBR Marina», предположи, что он может иметь в виду JBR или Dubai Marina, и задай один конкретный вопрос только если район действительно неоднозначен. Сразу переходи к делу. На фразу «мне нужна квартира в JBR Marina» ответь по существу и задай один следующий вопрос, например о бюджете. Не повторяй приветствие, не задавай «чем могу помочь?» после того, как цель уже названа. Не превращай диалог в анкету и не сбрасывай контекст без команды /reset."
 )
 
 
@@ -65,9 +66,20 @@ def telegram_send(chat_id, text):
         raise RuntimeError("Telegram sendMessage returned ok=false")
 
 
-def openai_answer(user_text):
+# Short per-chat memory. This keeps the active Telegram dialogue coherent
+# while the service process is running. A persistent database can be added later.
+CHAT_HISTORY = {}
+MAX_HISTORY_MESSAGES = 16
+
+
+def openai_answer(user_text, chat_id=None):
     if not OPENAI_API_KEY:
         return None
+
+    history = CHAT_HISTORY.get(str(chat_id), []) if chat_id is not None else []
+    current_turn = {"role": "user", "content": user_text[:12000]}
+    conversation_input = history + [current_turn]
+
     response = requests.post(
         OPENAI_RESPONSES_URL,
         headers={
@@ -77,7 +89,7 @@ def openai_answer(user_text):
         json={
             "model": "gpt-4.1-mini",
             "instructions": SYSTEM_INSTRUCTIONS,
-            "input": user_text[:12000],
+            "input": conversation_input,
             "max_output_tokens": 700,
         },
         timeout=60,
@@ -85,7 +97,6 @@ def openai_answer(user_text):
     response.raise_for_status()
     payload = response.json()
 
-    # Responses API usually supplies output_text; retain a safe fallback parser.
     answer = payload.get("output_text")
     if not answer:
         chunks = []
@@ -96,7 +107,13 @@ def openai_answer(user_text):
         answer = "\n".join(chunks)
     if not answer:
         raise RuntimeError("OpenAI returned no text output")
-    return answer.strip()
+
+    answer = answer.strip()
+    if chat_id is not None:
+        CHAT_HISTORY[str(chat_id)] = (conversation_input + [
+            {"role": "assistant", "content": answer}
+        ])[-MAX_HISTORY_MESSAGES:]
+    return answer
 
 
 def telegram_voice_to_text(message):
@@ -258,19 +275,23 @@ def telegram():
     incoming_text = (message.get("text") or message.get("caption") or "").strip()
 
     try:
-        if incoming_text.startswith("/start"):
+        if incoming_text.startswith("/reset"):
+            CHAT_HISTORY.pop(str(chat_id), None)
+            answer = "Контекст этого диалога очищен. Начнём заново. Что ищем в Дубае?"
+        elif incoming_text.startswith("/start"):
+            CHAT_HISTORY.pop(str(chat_id), None)
             language_code = (message.get("from", {}).get("language_code") or "").lower()
             if language_code.startswith("en"):
                 answer = (
                     "Hello! I’m Matvey, an AI assistant for a Dubai real estate team. "
                     "I can help with renting, buying, and selling property in Dubai. "
-                    "Tell me what you’re looking for or send a voice message."
+                    "Tell me what you’re looking for."
                 )
             else:
                 answer = (
                     "Здравствуйте! Я Матвей, AI-ассистент команды по недвижимости в Дубае. "
                     "Помогу с арендой, покупкой и продажей недвижимости. "
-                    "Напишите, что вас интересует, или отправьте голосовое сообщение."
+                    "Напишите, что ищем."
                 )
         elif not OPENAI_API_KEY:
             answer = (
@@ -283,9 +304,9 @@ def telegram():
                 if not transcript:
                     answer = "Не удалось разобрать голосовое сообщение. Попробуйте записать его ещё раз."
                 else:
-                    answer = openai_answer(transcript)
+                    answer = openai_answer(transcript, chat_id)
             elif incoming_text:
-                answer = openai_answer(incoming_text)
+                answer = openai_answer(incoming_text, chat_id)
             else:
                 answer = "Пока понимаю текст и голосовые сообщения. Отправьте, пожалуйста, текст или голос."
         if not answer:
