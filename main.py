@@ -78,8 +78,10 @@ def telegram_status():
 def telegram():
     data = request.get_json(silent=True) or {}
     message = data.get("message")
+    logging.info("Telegram webhook received: update_id=%s, has_message=%s", data.get("update_id"), bool(message))
 
     if not message:
+        logging.warning("Telegram update has no message field; update_id=%s", data.get("update_id"))
         return "OK", 200
 
     chat = message.get("chat", {})
@@ -87,6 +89,7 @@ def telegram():
     text = message.get("text", "")
 
     if not chat_id:
+        logging.warning("Telegram message has no chat_id; update_id=%s", data.get("update_id"))
         return "OK", 200
 
     if text.startswith("/start"):
@@ -112,6 +115,10 @@ def telegram():
         )
         response.raise_for_status()
         result = response.json()
+        if not result.get("ok"):
+            logging.error("Telegram sendMessage returned ok=false: %s", result)
+            return "Telegram API error", 500
+        logging.info("Telegram reply sent successfully for update_id=%s", data.get("update_id"))
         if not result.get("ok"):
             logging.error("Telegram sendMessage failed: %s", result)
             return "Telegram API error", 500
