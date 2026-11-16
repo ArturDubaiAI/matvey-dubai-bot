@@ -180,7 +180,7 @@ def save_owner_property_message(message, user_text, chat_id, sender_id):
             "is_owner_listing", "language", "deal_type", "property_category",
             "bedrooms", "property_type_detail", "address", "area", "community",
             "price", "currency", "furnishing", "availability", "contact_phone",
-            "whatsapp_allowed", "call_allowed"
+            "whatsapp_allowed", "call_allowed", "lease_end_date", "contact_opt_in"
         ],
         "additionalProperties": False
     }
