@@ -122,39 +122,70 @@ def telegram_send(chat_id, text):
 
 
 def telegram_send_audio(chat_id, text):
-    """Send every Matvey reply as spoken audio (Telegram voice message)."""
+    """Generate spoken reply with OpenAI TTS first; use Edge TTS as fallback."""
     if not TELEGRAM_API or not text:
         return
     spoken_text = re.sub(r"\[([^\]]+)\]\((https?://[^)]+)\)", r"\1", str(text))
-    spoken_text = re.sub(r"[*_\`#]", "", spoken_text).strip()
-    # Keep voice replies concise; do not silently skip lengthy answers.
-    if len(spoken_text) > 2800:
-        spoken_text = spoken_text[:2750].rsplit(" ", 1)[0] + ". Продолжение — в текстовом сообщении."
-    is_english = bool(re.search(r"[A-Za-z]", spoken_text)) and not bool(re.search(r"[А-Яа-яЁё]", spoken_text))
-    voices = ["en-US-GuyNeural", "en-US-JennyNeural"] if is_english else ["ru-RU-DmitryNeural", "ru-RU-SvetlanaNeural"]
-
-    async def render(path, voice):
-        communicator = edge_tts.Communicate(spoken_text, voice=voice, rate="-6%", pitch="-12Hz")
-        await communicator.save(path)
+    spoken_text = re.sub(r"[*_#]", "", spoken_text).replace(chr(96), "").strip()
+    if len(spoken_text) > 3800:
+        spoken_text = spoken_text[:3700].rsplit(" ", 1)[0] + ". Продолжение — в текстовом сообщении."
 
     temp_path = None
     try:
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as audio_file:
             temp_path = audio_file.name
-        last_error = None
-        for voice in voices:
+
+        generated = False
+        # Prefer OpenAI speech API; Edge TTS previously returned NoAudioReceived.
+        if OPENAI_API_KEY:
             try:
-                if os.path.exists(temp_path):
-                    os.remove(temp_path)
-                asyncio.run(render(temp_path, voice))
-                if os.path.getsize(temp_path) > 1000:
-                    last_error = None
-                    break
-                last_error = RuntimeError("TTS generated an empty audio file")
+                speech_response = requests.post(
+                    "https://api.openai.com/v1/audio/speech",
+                    headers={
+                        "Authorization": f"Bearer {OPENAI_API_KEY}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": "tts-1",
+                        "voice": "echo",
+                        "input": spoken_text,
+                        "response_format": "mp3",
+                    },
+                    timeout=90,
+                )
+                speech_response.raise_for_status()
+                if len(speech_response.content) > 1000:
+                    with open(temp_path, "wb") as output_file:
+                        output_file.write(speech_response.content)
+                    generated = True
+                else:
+                    logging.warning("OpenAI TTS returned an empty audio payload")
             except Exception as exc:
-                last_error = exc
-        if last_error:
-            raise last_error
+                logging.warning("OpenAI TTS failed; trying Edge fallback: error_type=%s", type(exc).__name__)
+
+        if not generated:
+            is_english = bool(re.search(r"[A-Za-z]", spoken_text)) and not bool(re.search(r"[А-Яа-яЁё]", spoken_text))
+            voices = ["en-US-GuyNeural", "en-US-JennyNeural"] if is_english else ["ru-RU-DmitryNeural", "ru-RU-SvetlanaNeural"]
+
+            async def render(path, voice):
+                communicator = edge_tts.Communicate(spoken_text, voice=voice, rate="-6%", pitch="-12Hz")
+                await communicator.save(path)
+
+            last_error = None
+            for voice in voices:
+                try:
+                    if os.path.exists(temp_path):
+                        os.remove(temp_path)
+                    asyncio.run(render(temp_path, voice))
+                    if os.path.getsize(temp_path) > 1000:
+                        generated = True
+                        break
+                    last_error = RuntimeError("TTS generated an empty audio file")
+                except Exception as exc:
+                    last_error = exc
+            if not generated:
+                raise last_error or RuntimeError("No TTS provider generated audio")
+
         with open(temp_path, "rb") as audio_file:
             response = requests.post(
                 f"{TELEGRAM_API}/sendVoice",
