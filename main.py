@@ -7,7 +7,7 @@ import os
 import re
 import sqlite3
 import csv
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import threading
 import time
 import requests
@@ -133,7 +133,7 @@ def claim_telegram_update(update_id):
         return True
     init_property_database()
     now = datetime.now(timezone.utc)
-    cutoff = (now - __import__("datetime").timedelta(days=30)).isoformat()
+    cutoff = (now - timedelta(days=30)).isoformat()
     with sqlite3.connect(MATVEY_DB_PATH, timeout=30) as conn:
         conn.execute("PRAGMA busy_timeout=30000")
         conn.execute("DELETE FROM processed_telegram_updates WHERE processed_at < ?", (cutoff,))
@@ -806,14 +806,6 @@ def telegram():
     if not message:
         return "OK", 200
 
-    try:
-        if not claim_telegram_update(data.get("update_id")):
-            logging.info("Duplicate Telegram update ignored: update_id=%s", data.get("update_id"))
-            return "OK", 200
-    except Exception as exc:
-        logging.exception("Could not register Telegram update: error_type=%s", type(exc).__name__)
-        # Continue processing rather than dropping a legitimate customer message.
-
     chat_id = message.get("chat", {}).get("id")
     if not chat_id:
         logging.warning("Telegram message has no chat_id; update_id=%s", data.get("update_id"))
@@ -822,6 +814,14 @@ def telegram():
     if not TELEGRAM_API:
         logging.error("TELEGRAM_TOKEN is missing or invalid")
         return "Token not configured", 500
+
+    try:
+        if not claim_telegram_update(data.get("update_id")):
+            logging.info("Duplicate Telegram update ignored: update_id=%s", data.get("update_id"))
+            return "OK", 200
+    except Exception as exc:
+        logging.exception("Could not register Telegram update: error_type=%s", type(exc).__name__)
+        # Continue processing rather than dropping a legitimate customer message.
 
     incoming_text = (message.get("text") or message.get("caption") or "").strip()
     sender_id = str((message.get("from") or {}).get("id", ""))
