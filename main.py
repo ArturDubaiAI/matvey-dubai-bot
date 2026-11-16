@@ -147,7 +147,7 @@ def telegram_send_audio(chat_id, text):
                     communicator = edge_tts.Communicate(
                         spoken_text,
                         voice="ru-RU-DmitryNeural",
-                        rate="+0%",
+                        rate="+8%",
                         pitch="+0Hz",
                     )
                     await communicator.save(path)
