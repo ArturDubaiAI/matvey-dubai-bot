@@ -496,7 +496,9 @@ def telegram():
     is_admin = bool(sender_id and sender_id in ADMIN_TELEGRAM_IDS)
 
     try:
-        if incoming_text.startswith("/reset"):
+        if incoming_text.startswith("/myid"):
+            answer = f"Ваш Telegram user ID: {sender_id}"
+        elif incoming_text.startswith("/reset"):
             answer = "Контекст этого диалога очищен. Начнём заново. Что ищем в Дубае?"
             CHAT_HISTORY[str(chat_id)] = [
                 {"role": "assistant", "content": answer}
