@@ -115,7 +115,7 @@ def telegram_voice_to_text(message):
     transcription_response = requests.post(
         OPENAI_TRANSCRIPTIONS_URL,
         headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
-        data={"model": "gpt-4o-mini-transcribe"},
+        data={"model": "gpt-transcribe", "languages": "[\"ru\"]"},
         files={"file": ("telegram-voice.ogg", io.BytesIO(audio_response.content), "audio/ogg")},
         timeout=90,
     )
