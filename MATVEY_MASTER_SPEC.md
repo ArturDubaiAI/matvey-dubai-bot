@@ -63,3 +63,14 @@ Potential integrations include Google Maps Platform, WhatsApp Business API/provi
 
 ## 9. Completion standard
 A feature is complete only after code is committed, deployment is confirmed, required external credentials/configuration are present, and a real test demonstrates the feature works. Documentation or prompt instructions alone do not make an integration operational.
+
+
+## 10. WhatsApp as a second client channel (planned requirement)
+- Matvey must eventually accept and answer customer conversations in both Telegram and WhatsApp, not merely send WhatsApp notifications to Arthur.
+- A customer should be able to open the official WhatsApp Business contact/link, write a normal message such as “Hi Matvey, how are you?” or ask for a property, and receive an AI reply in the same WhatsApp conversation.
+- Telegram and WhatsApp must use the same assistant identity, language detection, real-estate knowledge, lead qualification, conversation continuity, and safety rules, while keeping each customer's conversation history isolated by the channel-specific user/chat identifier.
+- Matvey should return verified Google Maps place links and route links in the same channel where the customer is chatting. Support Google Maps route modes for driving, walking and public transport (transit, including metro/tram/bus where Google Maps supports the route), and taxi directions where available through Maps. Never claim a route or transit mode exists unless Maps returns it.
+- The company must be able to share a WhatsApp contact/link with prospective clients just as it shares the Telegram bot link. The WhatsApp entry point must be tested from an ordinary customer's phone.
+- Implementation requires an official WhatsApp Business Platform / Cloud API or authorized provider, a business phone number, required Meta business setup/verification and credentials, webhook configuration, message-template compliance where applicable, and testing. Do not use unofficial WhatsApp automation or scrape personal accounts.
+- Keep WhatsApp customer messaging separate from optional internal WhatsApp notifications to Arthur. Both are distinct features and must be explicitly configured and tested.
+- Status: REQUIRED IN PROJECT PLAN; NOT YET IMPLEMENTED OR VERIFIED. Do not advertise a working WhatsApp bot until an external customer can message it and receive a successful reply.
