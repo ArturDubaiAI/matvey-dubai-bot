@@ -72,7 +72,13 @@ def init_property_database():
     db_dir = os.path.dirname(MATVEY_DB_PATH)
     if db_dir:
         os.makedirs(db_dir, exist_ok=True)
-    with sqlite3.connect(MATVEY_DB_PATH, timeout=20) as conn:
+    with sqlite3.connect(MATVEY_DB_PATH, timeout=30) as conn:
+        conn.execute("PRAGMA busy_timeout=30000")
+        conn.execute("PRAGMA synchronous=FULL")
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+        except sqlite3.DatabaseError as exc:
+            logging.warning("SQLite WAL mode unavailable; continuing safely: error_type=%s", type(exc).__name__)
         conn.execute("""
             CREATE TABLE IF NOT EXISTS owner_properties (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -702,11 +708,22 @@ def home():
 
 @app.route("/health", methods=["GET"])
 def health():
+    database_ok = False
+    try:
+        init_property_database()
+        with sqlite3.connect(MATVEY_DB_PATH, timeout=10) as conn:
+            conn.execute("PRAGMA busy_timeout=10000")
+            conn.execute("SELECT 1").fetchone()
+        database_ok = True
+    except Exception as exc:
+        logging.exception("Health check database failure: error_type=%s", type(exc).__name__)
     return jsonify({
-        "status": "ok",
+        "status": "ok" if database_ok else "degraded",
+        "database_ok": database_ok,
+        "database_storage": "persistent" if not MATVEY_DB_PATH.startswith("/tmp/") else "temporary",
         "telegram_token_configured": bool(TELEGRAM_TOKEN),
         "openai_api_key_configured": bool(OPENAI_API_KEY),
-    }), 200
+    }), 200 if database_ok else 503
 
 
 @app.route("/openai-status", methods=["GET"])
