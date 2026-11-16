@@ -792,11 +792,18 @@ def telegram():
                     "Наша команда поможет вам с арендой, покупкой и продажей недвижимости, подберёт подходящие варианты и сопроводит на всех этапах. "
                     "Подскажите, пожалуйста, вас интересует аренда, покупка или продажа недвижимости?"
                 )
-            # Include the greeting in context so the AI knows it has already
-            # introduced itself and does not greet the same person again.
-            CHAT_HISTORY[str(chat_id)] = [
-                {"role": "assistant", "content": answer}
-            ]
+            # Persist the greeting so the next message continues this conversation.
+            init_property_database()
+            with sqlite3.connect(MATVEY_DB_PATH, timeout=20) as conn:
+                conn.execute(
+                    """INSERT INTO chat_conversations (chat_id, history_json, updated_at)
+                       VALUES (?, ?, ?)
+                       ON CONFLICT(chat_id) DO UPDATE SET
+                           history_json=excluded.history_json,
+                           updated_at=excluded.updated_at""",
+                    (str(chat_id), json.dumps([{"role": "assistant", "content": answer}], ensure_ascii=False), datetime.now(timezone.utc).isoformat())
+                )
+                conn.commit()
         elif not OPENAI_API_KEY:
             answer = (
                 "Telegram подключён, но AI-ключ пока не настроен. "
