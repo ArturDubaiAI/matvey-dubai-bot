@@ -49,9 +49,25 @@ def telegram_status():
             "max_connections": info.get("max_connections"),
             "allowed_updates": info.get("allowed_updates"),
         }), 200
-    except requests.RequestException:
+    except requests.RequestException as exc:
         logging.exception("Telegram diagnostic request failed.")
-        return jsonify({"status": "error", "reason": "telegram_request_failed"}), 502
+        # Return safe diagnostics without ever exposing the bot token.
+        details = {"status": "error", "reason": "telegram_request_failed",
+                   "error_type": type(exc).__name__}
+        if isinstance(exc, requests.HTTPError) and exc.response is not None:
+            details["telegram_http_status"] = exc.response.status_code
+            try:
+                body = exc.response.json()
+                details["telegram_description"] = body.get("description", "Telegram returned an HTTP error")
+            except ValueError:
+                details["telegram_description"] = "Telegram returned a non-JSON HTTP error"
+        elif isinstance(exc, requests.ConnectionError):
+            details["telegram_description"] = "Could not connect to api.telegram.org"
+        elif isinstance(exc, requests.Timeout):
+            details["telegram_description"] = "Telegram API request timed out"
+        else:
+            details["telegram_description"] = str(exc)[:250]
+        return jsonify(details), 502
 
 
 @app.route("/telegram", methods=["POST"])
