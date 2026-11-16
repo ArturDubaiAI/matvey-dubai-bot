@@ -8,7 +8,7 @@ logging.basicConfig(level=logging.INFO)
 
 TELEGRAM_TOKEN_RAW = os.environ.get("TELEGRAM_TOKEN", "")
 TELEGRAM_TOKEN = TELEGRAM_TOKEN_RAW.strip()
-TOKEN_FORMAT_VALID = bool(__import__("re").fullmatch(r"\\d+:[A-Za-z0-9_-]+", TELEGRAM_TOKEN))
+TOKEN_FORMAT_VALID = bool(__import__("re").fullmatch(r"\d+:[A-Za-z0-9_-]+", TELEGRAM_TOKEN))
 WEBHOOK_URL = "https://matvey-dubai-bot.onrender.com/telegram"
 TELEGRAM_API = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}" if TELEGRAM_TOKEN else None
 
