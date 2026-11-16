@@ -138,6 +138,36 @@ def health():
     }), 200
 
 
+@app.route("/openai-status", methods=["GET"])
+def openai_status():
+    """Check whether the configured OpenAI key is accepted; never expose credentials."""
+    if not OPENAI_API_KEY:
+        return jsonify({"status": "error", "reason": "api_key_not_configured"}), 503
+    try:
+        response = requests.get(
+            "https://api.openai.com/v1/models",
+            headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
+            timeout=15,
+        )
+        if response.ok:
+            return jsonify({"status": "ok", "openai_api_key_valid": True}), 200
+        try:
+            error_data = response.json().get("error", {})
+        except (ValueError, AttributeError):
+            error_data = {}
+        return jsonify({
+            "status": "error",
+            "openai_api_key_valid": False,
+            "http_status": response.status_code,
+            "error_type": error_data.get("type"),
+            "error_code": error_data.get("code"),
+            "error_param": error_data.get("param"),
+        }), 502
+    except requests.RequestException as exc:
+        logging.error("OpenAI key diagnostic failed: error_type=%s", type(exc).__name__)
+        return jsonify({"status": "error", "reason": "openai_connection_failed"}), 502
+
+
 @app.route("/telegram-status", methods=["GET"])
 def telegram_status():
     """Safe diagnostic endpoint; never returns credentials."""
