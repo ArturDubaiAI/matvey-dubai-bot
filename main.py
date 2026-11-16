@@ -1,9 +1,12 @@
 import io
+import asyncio
+import tempfile
 import logging
 import os
 import re
 import threading
 import requests
+import edge_tts
 from flask import Flask, request, jsonify
 
 app = Flask(__name__)
@@ -113,6 +116,49 @@ def telegram_send(chat_id, text):
         result = response.json()
         if not result.get("ok"):
             raise RuntimeError("Telegram sendMessage returned ok=false")
+
+
+def telegram_send_audio(chat_id, text):
+    """Speak Matvey's reply with a free Edge neural voice; text delivery remains primary."""
+    if not TELEGRAM_API or not text:
+        return
+    spoken_text = re.sub(r"\\[([^\\]]+)\\]\\((https?://[^)]+)\\)", r"\\1", str(text))
+    spoken_text = re.sub(r"[*_\`#]", "", spoken_text).strip()
+    if len(spoken_text) > 2800:
+        logging.info("TTS skipped: reply is longer than the safe audio limit")
+        return
+    # Use a male voice in both languages and gently lower pitch / speaking speed.
+    is_english = bool(re.search(r"[A-Za-z]", spoken_text)) and not bool(re.search(r"[А-Яа-яЁё]", spoken_text))
+    voice = "en-US-GuyNeural" if is_english else "ru-RU-DmitryNeural"
+    async def render(path):
+        communicator = edge_tts.Communicate(
+            spoken_text, voice=voice, rate="-6%", pitch="-12Hz"
+        )
+        await communicator.save(path)
+    temp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as audio_file:
+            temp_path = audio_file.name
+        asyncio.run(render(temp_path))
+        with open(temp_path, "rb") as audio_file:
+            response = requests.post(
+                f"{TELEGRAM_API}/sendAudio",
+                data={
+                    "chat_id": chat_id,
+                    "title": "Матвей — голосовой ответ",
+                    "performer": "MATVEY DUBAI AI",
+                },
+                files={"audio": ("matvey.mp3", audio_file, "audio/mpeg")},
+                timeout=60,
+            )
+        response.raise_for_status()
+        if not response.json().get("ok"):
+            raise RuntimeError("Telegram sendAudio returned ok=false")
+    except Exception as exc:
+        logging.warning("Matvey TTS unavailable: error_type=%s", type(exc).__name__)
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            os.remove(temp_path)
 
 
 # Short per-chat memory. This keeps the active Telegram dialogue coherent
@@ -384,6 +430,7 @@ def telegram():
         if not answer:
             answer = "Не получилось подготовить ответ. Попробуйте ещё раз."
         telegram_send(chat_id, answer)
+        telegram_send_audio(chat_id, answer)
         logging.info("Telegram reply sent successfully for update_id=%s", data.get("update_id"))
     except requests.HTTPError as exc:
         status = getattr(exc.response, "status_code", None)
