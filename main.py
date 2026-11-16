@@ -773,10 +773,11 @@ def telegram():
         elif incoming_text.startswith("/myid"):
             answer = f"Ваш Telegram user ID: {sender_id}"
         elif incoming_text.startswith("/reset"):
+            init_property_database()
+            with sqlite3.connect(MATVEY_DB_PATH, timeout=20) as conn:
+                conn.execute("DELETE FROM chat_conversations WHERE chat_id=?", (str(chat_id),))
+                conn.commit()
             answer = "Контекст этого диалога очищен. Начнём заново. Что ищем в Дубае?"
-            CHAT_HISTORY[str(chat_id)] = [
-                {"role": "assistant", "content": answer}
-            ]
         elif incoming_text.startswith("/start"):
             language_code = (message.get("from", {}).get("language_code") or "").lower()
             if language_code.startswith("en"):
