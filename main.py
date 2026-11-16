@@ -180,7 +180,7 @@ def telegram_send_audio(chat_id, text):
                 else:
                     logging.warning("Russian Edge TTS returned an empty audio file")
             except Exception as exc:
-                logging.warning("Russian Edge TTS failed; trying OpenAI: error_type=%s", type(exc).__name__)
+                logging.warning("Approved Russian voice failed; no substitute voice will be sent: error_type=%s", type(exc).__name__)
 
         # Russian voice is locked to the approved Dmitry voice. If it fails,
         # do not send an unwanted substitute voice.
