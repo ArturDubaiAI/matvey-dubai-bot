@@ -781,13 +781,30 @@ def telegram():
                     answer = openai_answer(transcript, chat_id, is_admin=is_admin)
             elif incoming_text:
                 answer = openai_answer(incoming_text, chat_id, is_admin=is_admin)
+            elif message.get("photo"):
+                answer = "Фото получил. Добавлю его к карточке объекта."
             else:
                 answer = "Пока понимаю текст и голосовые сообщения. Отправьте, пожалуйста, текст или голос."
         if not answer:
             answer = "Не получилось подготовить ответ. Попробуйте ещё раз."
         telegram_send(chat_id, answer)
-        # Send the human-facing reply first; database extraction must not delay the client response.
-        if not is_admin:
+        # Save listing details and Telegram photo file IDs for both test/admin and client chats.
+        # Separate photo messages are attached to an existing listing record as well.
+        if message.get("photo"):
+            init_property_database()
+            photo_ids = [p.get("file_id") for p in message.get("photo", []) if p.get("file_id")]
+            if photo_ids:
+                with sqlite3.connect(MATVEY_DB_PATH, timeout=20) as conn:
+                    row = conn.execute("SELECT photo_file_ids FROM owner_properties WHERE chat_id=?", (str(chat_id),)).fetchone()
+                    if row:
+                        try:
+                            saved_ids = json.loads(row[0] or "[]")
+                        except (TypeError, ValueError):
+                            saved_ids = []
+                        saved_ids.extend(pid for pid in photo_ids if pid not in saved_ids)
+                        conn.execute("UPDATE owner_properties SET photo_file_ids=?, updated_at=? WHERE chat_id=?", (json.dumps(saved_ids, ensure_ascii=False), datetime.now(timezone.utc).isoformat(), str(chat_id)))
+                        conn.commit()
+        if not is_admin or message.get("photo") or re.search(r"сдаю|сдать|сдается|сдаётся|продаю|продать|for rent|for sale", incoming_text, re.I):
             save_owner_property_message(message, incoming_text, chat_id, sender_id)
         telegram_send_audio(chat_id, answer)
         logging.info("Telegram reply sent successfully for update_id=%s", data.get("update_id"))
