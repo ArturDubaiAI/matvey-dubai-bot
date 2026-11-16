@@ -136,8 +136,32 @@ def telegram_send_audio(chat_id, text):
             temp_path = audio_file.name
 
         generated = False
-        # Prefer OpenAI speech API; Edge TTS previously returned NoAudioReceived.
-        if OPENAI_API_KEY:
+        is_russian = bool(re.search(r"[А-Яа-яЁё]", spoken_text))
+        is_english = bool(re.search(r"[A-Za-z]", spoken_text)) and not is_russian
+
+        # Russian replies use a native Russian neural voice first. Normal pitch
+        # and speed avoid the unnaturally low, sluggish delivery of the old settings.
+        if is_russian:
+            try:
+                async def render_russian(path):
+                    communicator = edge_tts.Communicate(
+                        spoken_text,
+                        voice="ru-RU-DmitryNeural",
+                        rate="+0%",
+                        pitch="+0Hz",
+                    )
+                    await communicator.save(path)
+
+                asyncio.run(render_russian(temp_path))
+                if os.path.getsize(temp_path) > 1000:
+                    generated = True
+                else:
+                    logging.warning("Russian Edge TTS returned an empty audio file")
+            except Exception as exc:
+                logging.warning("Russian Edge TTS failed; trying OpenAI: error_type=%s", type(exc).__name__)
+
+        # OpenAI is the preferred voice for English and fallback for Russian.
+        if not generated and OPENAI_API_KEY:
             try:
                 speech_response = requests.post(
                     "https://api.openai.com/v1/audio/speech",
@@ -163,20 +187,23 @@ def telegram_send_audio(chat_id, text):
             except Exception as exc:
                 logging.warning("OpenAI TTS failed; trying Edge fallback: error_type=%s", type(exc).__name__)
 
-        if not generated:
-            is_english = bool(re.search(r"[A-Za-z]", spoken_text)) and not bool(re.search(r"[А-Яа-яЁё]", spoken_text))
-            voices = ["en-US-GuyNeural", "en-US-JennyNeural"] if is_english else ["ru-RU-DmitryNeural", "ru-RU-SvetlanaNeural"]
-
-            async def render(path, voice):
-                communicator = edge_tts.Communicate(spoken_text, voice=voice, rate="-6%", pitch="-12Hz")
+        # Last-resort Edge voice for English. Russian was already attempted above.
+        if not generated and is_english:
+            async def render_english(path, voice):
+                communicator = edge_tts.Communicate(
+                    spoken_text,
+                    voice=voice,
+                    rate="+0%",
+                    pitch="+0Hz",
+                )
                 await communicator.save(path)
 
             last_error = None
-            for voice in voices:
+            for voice in ["en-US-GuyNeural", "en-US-JennyNeural"]:
                 try:
                     if os.path.exists(temp_path):
                         os.remove(temp_path)
-                    asyncio.run(render(temp_path, voice))
+                    asyncio.run(render_english(temp_path, voice))
                     if os.path.getsize(temp_path) > 1000:
                         generated = True
                         break
@@ -185,6 +212,9 @@ def telegram_send_audio(chat_id, text):
                     last_error = exc
             if not generated:
                 raise last_error or RuntimeError("No TTS provider generated audio")
+
+        if not generated:
+            raise RuntimeError("No TTS provider generated audio")
 
         with open(temp_path, "rb") as audio_file:
             response = requests.post(
