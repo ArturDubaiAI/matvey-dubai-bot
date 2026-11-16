@@ -74,3 +74,12 @@ A feature is complete only after code is committed, deployment is confirmed, req
 - Implementation requires an official WhatsApp Business Platform / Cloud API or authorized provider, a business phone number, required Meta business setup/verification and credentials, webhook configuration, message-template compliance where applicable, and testing. Do not use unofficial WhatsApp automation or scrape personal accounts.
 - Keep WhatsApp customer messaging separate from optional internal WhatsApp notifications to Arthur. Both are distinct features and must be explicitly configured and tested.
 - Status: REQUIRED IN PROJECT PLAN; NOT YET IMPLEMENTED OR VERIFIED. Do not advertise a working WhatsApp bot until an external customer can message it and receive a successful reply.
+
+
+## 11. Concise replies and approved voice
+- Customer-facing replies must be natural, direct and short: normally 1–3 short sentences, usually no more than about 40 words. Ask only one concise follow-up question at a time. Avoid essay-like replies, long introductions, repeated information, lectures and unnecessary lists. Expand only when the customer explicitly asks for detail or accuracy requires it.
+- Voice messages must be equally concise, normally around 10–15 seconds maximum, and must not repeat long explanations already unnecessary in the text.
+- For Russian speech, use only the voice explicitly approved by Arthur: Microsoft Edge TTS voice `ru-RU-DmitryNeural`, rate `+8%`, pitch `+0Hz`. Do not substitute another voice. If generation fails after retries, keep the text reply and report/log the audio failure; never send an unwanted replacement voice.
+- Delivery order in Telegram: send the text response first, then send the corresponding voice message after approximately one second.
+- This approved voice preference and concise style must carry over to WhatsApp when the official customer-facing WhatsApp integration is implemented, subject to channel audio-message support and successful delivery testing.
+- Status: short-response rules and Russian voice settings are already present in `main.py`; the one-second text-to-audio delay is added in this update. End-to-end delivery still requires live Telegram testing. WhatsApp voice delivery remains planned and unverified.
