@@ -1,4 +1,5 @@
 import os
+import re
 import logging
 import requests
 from flask import Flask, request, jsonify
@@ -6,11 +7,20 @@ from flask import Flask, request, jsonify
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 
+# Accept either the raw BotFather token or a pasted BotFather message.
+# Never log the raw value: it is a credential.
 TELEGRAM_TOKEN_RAW = os.environ.get("TELEGRAM_TOKEN", "")
-TELEGRAM_TOKEN = TELEGRAM_TOKEN_RAW.strip()
-TOKEN_FORMAT_VALID = bool(__import__("re").fullmatch(r"\d+:[A-Za-z0-9_-]+", TELEGRAM_TOKEN))
+TOKEN_MATCHES = re.findall(r"(?<![A-Za-z0-9_])([0-9]{8,12}:[A-Za-z0-9_-]{30,})(?![A-Za-z0-9_-])", TELEGRAM_TOKEN_RAW)
+TELEGRAM_TOKEN = TOKEN_MATCHES[0] if len(TOKEN_MATCHES) == 1 else ""
+TOKEN_FORMAT_VALID = len(TOKEN_MATCHES) == 1
 WEBHOOK_URL = "https://matvey-dubai-bot.onrender.com/telegram"
 TELEGRAM_API = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}" if TELEGRAM_TOKEN else None
+
+
+def safe_telegram_error(label, exc):
+    """Log Telegram failures without printing request URLs or bot tokens."""
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    logging.error("%s: error_type=%s http_status=%s", label, type(exc).__name__, status)
 
 
 @app.route("/", methods=["GET"])
@@ -29,10 +39,14 @@ def health():
 @app.route("/telegram-status", methods=["GET"])
 def telegram_status():
     """Safe diagnostic endpoint; never returns the bot token."""
-    if not TELEGRAM_TOKEN:
-        return jsonify({"status": "error", "reason": "token_not_configured", "token_length": 0}), 503
+    if not TELEGRAM_TOKEN_RAW.strip():
+        return jsonify({"status": "error", "reason": "token_not_configured"}), 503
     if not TOKEN_FORMAT_VALID:
-        return jsonify({"status": "error", "reason": "token_format_invalid", "token_length": len(TELEGRAM_TOKEN), "outer_whitespace_removed": TELEGRAM_TOKEN_RAW != TELEGRAM_TOKEN}), 503
+        return jsonify({
+            "status": "error",
+            "reason": "token_format_invalid_or_multiple_tokens",
+            "token_length": len(TELEGRAM_TOKEN_RAW.strip())
+        }), 503
     try:
         me_response = requests.get(f"{TELEGRAM_API}/getMe", timeout=10)
         webhook_response = requests.get(f"{TELEGRAM_API}/getWebhookInfo", timeout=10)
@@ -41,7 +55,11 @@ def telegram_status():
         me = me_response.json()
         webhook = webhook_response.json()
         if not me.get("ok") or not webhook.get("ok"):
-            return jsonify({"status": "telegram_api_error", "getMe_ok": me.get("ok"), "getWebhookInfo_ok": webhook.get("ok")}), 502
+            return jsonify({
+                "status": "telegram_api_error",
+                "getMe_ok": me.get("ok"),
+                "getWebhookInfo_ok": webhook.get("ok")
+            }), 502
         info = webhook.get("result", {})
         return jsonify({
             "status": "ok",
@@ -54,15 +72,18 @@ def telegram_status():
             "allowed_updates": info.get("allowed_updates"),
         }), 200
     except requests.RequestException as exc:
-        logging.exception("Telegram diagnostic request failed.")
-        # Return safe diagnostics without ever exposing the bot token.
-        details = {"status": "error", "reason": "telegram_request_failed",
-                   "error_type": type(exc).__name__}
+        safe_telegram_error("Telegram diagnostic request failed", exc)
+        details = {
+            "status": "error",
+            "reason": "telegram_request_failed",
+            "error_type": type(exc).__name__,
+        }
         if isinstance(exc, requests.HTTPError) and exc.response is not None:
             details["telegram_http_status"] = exc.response.status_code
             try:
-                body = exc.response.json()
-                details["telegram_description"] = body.get("description", "Telegram returned an HTTP error")
+                details["telegram_description"] = exc.response.json().get(
+                    "description", "Telegram returned an HTTP error"
+                )
             except ValueError:
                 details["telegram_description"] = "Telegram returned a non-JSON HTTP error"
         elif isinstance(exc, requests.ConnectionError):
@@ -70,7 +91,7 @@ def telegram_status():
         elif isinstance(exc, requests.Timeout):
             details["telegram_description"] = "Telegram API request timed out"
         else:
-            details["telegram_description"] = str(exc)[:250]
+            details["telegram_description"] = "Telegram request failed"
         return jsonify(details), 502
 
 
@@ -78,21 +99,29 @@ def telegram_status():
 def telegram():
     data = request.get_json(silent=True) or {}
     message = data.get("message")
-    logging.info("Telegram webhook received: update_id=%s, has_message=%s", data.get("update_id"), bool(message))
+    logging.info(
+        "Telegram webhook received: update_id=%s, has_message=%s",
+        data.get("update_id"), bool(message)
+    )
 
     if not message:
-        logging.warning("Telegram update has no message field; update_id=%s", data.get("update_id"))
+        logging.warning(
+            "Telegram update has no message field; update_id=%s",
+            data.get("update_id")
+        )
         return "OK", 200
 
-    chat = message.get("chat", {})
-    chat_id = chat.get("id")
-    text = message.get("text", "")
+    chat_id = message.get("chat", {}).get("id")
+    incoming_text = message.get("text", "")
 
     if not chat_id:
-        logging.warning("Telegram message has no chat_id; update_id=%s", data.get("update_id"))
+        logging.warning(
+            "Telegram message has no chat_id; update_id=%s",
+            data.get("update_id")
+        )
         return "OK", 200
 
-    if text.startswith("/start"):
+    if incoming_text.startswith("/start"):
         answer = (
             "Здравствуйте! Я Матвей, AI-ассистент по недвижимости в Дубае. "
             "Чем могу помочь?"
@@ -104,8 +133,8 @@ def telegram():
         )
 
     if not TELEGRAM_API:
-        logging.error("TELEGRAM_TOKEN is not configured.")
-        return "Token not configured", 500
+        logging.error("TELEGRAM_TOKEN is missing or does not contain exactly one valid token.")
+        return "Token not configured correctly", 500
 
     try:
         response = requests.post(
@@ -116,11 +145,17 @@ def telegram():
         response.raise_for_status()
         result = response.json()
         if not result.get("ok"):
-            logging.error("Telegram sendMessage returned ok=false: %s", result)
+            logging.error(
+                "Telegram sendMessage returned ok=false; update_id=%s",
+                data.get("update_id")
+            )
             return "Telegram API error", 500
-        logging.info("Telegram reply sent successfully for update_id=%s", data.get("update_id"))
-    except requests.RequestException:
-        logging.exception("Failed to send message to Telegram.")
+        logging.info(
+            "Telegram reply sent successfully for update_id=%s",
+            data.get("update_id")
+        )
+    except requests.RequestException as exc:
+        safe_telegram_error("Failed to send Telegram reply", exc)
         return "Telegram request failed", 500
 
     return "OK", 200
@@ -135,9 +170,11 @@ if __name__ == "__main__":
                 timeout=15,
             )
             response.raise_for_status()
-            logging.info("Telegram webhook setup: %s", response.text)
-        except requests.RequestException:
-            logging.exception("Failed to set Telegram webhook.")
+            logging.info("Telegram webhook setup succeeded; http_status=%s", response.status_code)
+        except requests.RequestException as exc:
+            safe_telegram_error("Failed to set Telegram webhook", exc)
+    elif TELEGRAM_TOKEN_RAW.strip():
+        logging.error("TELEGRAM_TOKEN format is invalid or multiple tokens were supplied.")
     else:
         logging.warning("TELEGRAM_TOKEN is not configured.")
 
