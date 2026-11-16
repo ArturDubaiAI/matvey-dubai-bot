@@ -9,6 +9,7 @@ import sqlite3
 import csv
 from datetime import datetime, timezone
 import threading
+import time
 import requests
 import edge_tts
 from flask import Flask, request, jsonify
@@ -457,7 +458,7 @@ def telegram_send_audio(chat_id, text):
                         attempt + 1, type(exc).__name__,
                     )
                     if attempt < 2:
-                        await asyncio.sleep(1)
+                        time.sleep(1)
             if not generated:
                 logging.error(
                     "Approved Russian voice unavailable after retry; no substitute voice will be sent: error_type=%s",
@@ -915,7 +916,7 @@ def telegram():
             safe_telegram_error("Failed to send error reply", send_exc)
         return "OK", 200
     except Exception as exc:
-        logging.error("Unexpected message processing error: error_type=%s", type(exc).__name__)
+        logging.exception("Unexpected message processing error: error_type=%s", type(exc).__name__)
         try:
             telegram_send(chat_id, "Возникла внутренняя ошибка. Попробуйте ещё раз.")
         except Exception as send_exc:
