@@ -119,7 +119,31 @@ def init_property_database():
                 updated_at TEXT NOT NULL
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS processed_telegram_updates (
+                update_id INTEGER PRIMARY KEY,
+                processed_at TEXT NOT NULL
+            )
+        """)
         conn.commit()
+
+def claim_telegram_update(update_id):
+    """Atomically ignore Telegram webhook retries; retain IDs for 30 days."""
+    if update_id is None:
+        return True
+    init_property_database()
+    now = datetime.now(timezone.utc)
+    cutoff = (now - __import__("datetime").timedelta(days=30)).isoformat()
+    with sqlite3.connect(MATVEY_DB_PATH, timeout=30) as conn:
+        conn.execute("PRAGMA busy_timeout=30000")
+        conn.execute("DELETE FROM processed_telegram_updates WHERE processed_at < ?", (cutoff,))
+        cursor = conn.execute(
+            "INSERT OR IGNORE INTO processed_telegram_updates (update_id, processed_at) VALUES (?, ?)",
+            (int(update_id), now.isoformat()),
+        )
+        conn.commit()
+        return cursor.rowcount == 1
+
 
 def telegram_send_database_export(chat_id):
     """Send current SQLite records as a CSV file to an authorized admin."""
@@ -782,6 +806,14 @@ def telegram():
     if not message:
         return "OK", 200
 
+    try:
+        if not claim_telegram_update(data.get("update_id")):
+            logging.info("Duplicate Telegram update ignored: update_id=%s", data.get("update_id"))
+            return "OK", 200
+    except Exception as exc:
+        logging.exception("Could not register Telegram update: error_type=%s", type(exc).__name__)
+        # Continue processing rather than dropping a legitimate customer message.
+
     chat_id = message.get("chat", {}).get("id")
     if not chat_id:
         logging.warning("Telegram message has no chat_id; update_id=%s", data.get("update_id"))
@@ -860,22 +892,34 @@ def telegram():
         # Save listing details and Telegram photo file IDs for both test/admin and client chats.
         # Separate photo messages are attached to an existing listing record as well.
         if message.get("photo"):
-            init_property_database()
-            photo_ids = [p.get("file_id") for p in message.get("photo", []) if p.get("file_id")]
-            if photo_ids:
-                with sqlite3.connect(MATVEY_DB_PATH, timeout=20) as conn:
-                    row = conn.execute("SELECT photo_file_ids FROM owner_properties WHERE chat_id=?", (str(chat_id),)).fetchone()
-                    if row:
-                        try:
-                            saved_ids = json.loads(row[0] or "[]")
-                        except (TypeError, ValueError):
-                            saved_ids = []
-                        saved_ids.extend(pid for pid in photo_ids if pid not in saved_ids)
-                        conn.execute("UPDATE owner_properties SET photo_file_ids=?, updated_at=? WHERE chat_id=?", (json.dumps(saved_ids, ensure_ascii=False), datetime.now(timezone.utc).isoformat(), str(chat_id)))
-                        conn.commit()
+            try:
+                init_property_database()
+                photo_ids = [p.get("file_id") for p in message.get("photo", []) if p.get("file_id")]
+                if photo_ids:
+                    with sqlite3.connect(MATVEY_DB_PATH, timeout=30) as conn:
+                        conn.execute("PRAGMA busy_timeout=30000")
+                        row = conn.execute("SELECT photo_file_ids FROM owner_properties WHERE chat_id=?", (str(chat_id),)).fetchone()
+                        if row:
+                            try:
+                                saved_ids = json.loads(row[0] or "[]")
+                            except (TypeError, ValueError):
+                                saved_ids = []
+                            saved_ids.extend(pid for pid in photo_ids if pid not in saved_ids)
+                            conn.execute("UPDATE owner_properties SET photo_file_ids=?, updated_at=? WHERE chat_id=?", (json.dumps(saved_ids, ensure_ascii=False), datetime.now(timezone.utc).isoformat(), str(chat_id)))
+                            conn.commit()
+            except Exception as exc:
+                logging.exception("Photo metadata save failed; text reply was already sent: error_type=%s", type(exc).__name__)
+
         if not is_admin or message.get("photo") or re.search(r"сдаю|сдать|сдается|сдаётся|продаю|продать|for rent|for sale", incoming_text, re.I):
-            save_owner_property_message(message, incoming_text, chat_id, sender_id)
-        telegram_send_audio(chat_id, answer)
+            try:
+                save_owner_property_message(message, incoming_text, chat_id, sender_id)
+            except Exception as exc:
+                logging.exception("Owner intake failed; text reply was already sent: error_type=%s", type(exc).__name__)
+
+        try:
+            telegram_send_audio(chat_id, answer)
+        except Exception as exc:
+            logging.exception("Optional voice reply failed; text reply remains delivered: error_type=%s", type(exc).__name__)
         logging.info("Telegram reply sent successfully for update_id=%s", data.get("update_id"))
     except requests.HTTPError as exc:
         status = getattr(exc.response, "status_code", None)
