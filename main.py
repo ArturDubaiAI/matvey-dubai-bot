@@ -171,23 +171,37 @@ def telegram_send_audio(chat_id, text):
         # Russian replies use a native Russian neural voice first. Normal pitch
         # and speed avoid the unnaturally low, sluggish delivery of the old settings.
         if is_russian:
-            try:
-                async def render_russian(path):
-                    communicator = edge_tts.Communicate(
-                        spoken_text,
-                        voice=RU_TTS_VOICE,
-                        rate=RU_TTS_RATE,
-                        pitch=RU_TTS_PITCH,
-                    )
-                    await communicator.save(path)
+            async def render_russian(path):
+                communicator = edge_tts.Communicate(
+                    spoken_text,
+                    voice=RU_TTS_VOICE,
+                    rate=RU_TTS_RATE,
+                    pitch=RU_TTS_PITCH,
+                )
+                await communicator.save(path)
 
-                asyncio.run(render_russian(temp_path))
-                if os.path.getsize(temp_path) > 1000:
-                    generated = True
-                else:
-                    logging.warning("Russian Edge TTS returned an empty audio file")
-            except Exception as exc:
-                logging.warning("Approved Russian voice failed; no substitute voice will be sent: error_type=%s", type(exc).__name__)
+            # Retry the exact approved Russian voice once if synthesis fails.
+            last_error = None
+            for attempt in range(2):
+                try:
+                    if os.path.exists(temp_path):
+                        os.remove(temp_path)
+                    asyncio.run(render_russian(temp_path))
+                    if os.path.exists(temp_path) and os.path.getsize(temp_path) > 1000:
+                        generated = True
+                        break
+                    last_error = RuntimeError("Russian Edge TTS returned an empty audio file")
+                except Exception as exc:
+                    last_error = exc
+                    logging.warning(
+                        "Approved Russian TTS attempt %s/2 failed: error_type=%s",
+                        attempt + 1, type(exc).__name__,
+                    )
+            if not generated:
+                logging.error(
+                    "Approved Russian voice unavailable after retry; no substitute voice will be sent: error_type=%s",
+                    type(last_error).__name__ if last_error else "unknown",
+                )
 
         # Russian voice is locked to the approved Dmitry voice. If it fails,
         # do not send an unwanted substitute voice.
