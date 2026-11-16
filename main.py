@@ -119,9 +119,6 @@ def telegram():
             logging.error("Telegram sendMessage returned ok=false: %s", result)
             return "Telegram API error", 500
         logging.info("Telegram reply sent successfully for update_id=%s", data.get("update_id"))
-        if not result.get("ok"):
-            logging.error("Telegram sendMessage failed: %s", result)
-            return "Telegram API error", 500
     except requests.RequestException:
         logging.exception("Failed to send message to Telegram.")
         return "Telegram request failed", 500
