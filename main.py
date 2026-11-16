@@ -6,7 +6,9 @@ from flask import Flask, request, jsonify
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+TELEGRAM_TOKEN_RAW = os.environ.get("TELEGRAM_TOKEN", "")
+TELEGRAM_TOKEN = TELEGRAM_TOKEN_RAW.strip()
+TOKEN_FORMAT_VALID = bool(__import__("re").fullmatch(r"\\d+:[A-Za-z0-9_-]+", TELEGRAM_TOKEN))
 WEBHOOK_URL = "https://matvey-dubai-bot.onrender.com/telegram"
 TELEGRAM_API = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}" if TELEGRAM_TOKEN else None
 
@@ -27,8 +29,10 @@ def health():
 @app.route("/telegram-status", methods=["GET"])
 def telegram_status():
     """Safe diagnostic endpoint; never returns the bot token."""
-    if not TELEGRAM_API:
-        return jsonify({"status": "error", "reason": "token_not_configured"}), 503
+    if not TELEGRAM_TOKEN:
+        return jsonify({"status": "error", "reason": "token_not_configured", "token_length": 0}), 503
+    if not TOKEN_FORMAT_VALID:
+        return jsonify({"status": "error", "reason": "token_format_invalid", "token_length": len(TELEGRAM_TOKEN), "outer_whitespace_removed": TELEGRAM_TOKEN_RAW != TELEGRAM_TOKEN}), 503
     try:
         me_response = requests.get(f"{TELEGRAM_API}/getMe", timeout=10)
         webhook_response = requests.get(f"{TELEGRAM_API}/getWebhookInfo", timeout=10)
