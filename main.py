@@ -40,8 +40,34 @@ RU_TTS_PITCH = "+0Hz"
 # SQLite база объектов. Для постоянного хранения на Render подключите Persistent Disk
 # с mount path /var/data; путь можно переопределить через MATVEY_DB_PATH.
 MATVEY_DB_PATH = os.environ.get("MATVEY_DB_PATH", "/var/data/matvey_objects.db")
+_DB_PATH_CHECKED = False
+
+def ensure_database_path():
+    """Use the persistent Render disk when writable; otherwise keep the bot operational on ephemeral /tmp."""
+    global MATVEY_DB_PATH, _DB_PATH_CHECKED
+    if _DB_PATH_CHECKED:
+        return
+    preferred_path = MATVEY_DB_PATH
+    try:
+        db_dir = os.path.dirname(preferred_path)
+        if db_dir:
+            os.makedirs(db_dir, exist_ok=True)
+        probe_path = preferred_path + ".write_test"
+        with open(probe_path, "w", encoding="utf-8") as probe:
+            probe.write("ok")
+        os.remove(probe_path)
+    except OSError as exc:
+        fallback_path = "/tmp/matvey_objects.db"
+        logging.warning(
+            "Database path is not writable; switching to temporary storage: preferred=%s fallback=%s error_type=%s",
+            preferred_path, fallback_path, type(exc).__name__,
+        )
+        MATVEY_DB_PATH = fallback_path
+        os.makedirs("/tmp", exist_ok=True)
+    _DB_PATH_CHECKED = True
 
 def init_property_database():
+    ensure_database_path()
     db_dir = os.path.dirname(MATVEY_DB_PATH)
     if db_dir:
         os.makedirs(db_dir, exist_ok=True)
@@ -413,9 +439,9 @@ def telegram_send_audio(chat_id, text):
                 )
                 await communicator.save(path)
 
-            # Retry the exact approved Russian voice once if synthesis fails.
+            # Retry the exact approved Russian voice up to three times for transient Edge TTS failures.
             last_error = None
-            for attempt in range(2):
+            for attempt in range(3):
                 try:
                     if os.path.exists(temp_path):
                         os.remove(temp_path)
@@ -427,9 +453,11 @@ def telegram_send_audio(chat_id, text):
                 except Exception as exc:
                     last_error = exc
                     logging.warning(
-                        "Approved Russian TTS attempt %s/2 failed: error_type=%s",
+                        "Approved Russian TTS attempt %s/3 failed: error_type=%s",
                         attempt + 1, type(exc).__name__,
                     )
+                    if attempt < 2:
+                        await asyncio.sleep(1)
             if not generated:
                 logging.error(
                     "Approved Russian voice unavailable after retry; no substitute voice will be sent: error_type=%s",
@@ -509,7 +537,10 @@ def telegram_send_audio(chat_id, text):
         logging.warning("Matvey TTS unavailable after retry: error_type=%s", type(exc).__name__)
     finally:
         if temp_path and os.path.exists(temp_path):
-            os.remove(temp_path)
+            try:
+                os.remove(temp_path)
+            except OSError as cleanup_error:
+                logging.warning("TTS temporary-file cleanup failed: error_type=%s", type(cleanup_error).__name__)
 
 
 # Per-chat conversation locks. Dialogue history itself is persisted in SQLite.
