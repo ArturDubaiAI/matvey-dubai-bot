@@ -729,9 +729,10 @@ def telegram():
                 answer = "Пока понимаю текст и голосовые сообщения. Отправьте, пожалуйста, текст или голос."
         if not answer:
             answer = "Не получилось подготовить ответ. Попробуйте ещё раз."
+        telegram_send(chat_id, answer)
+        # Send the human-facing reply first; database extraction must not delay the client response.
         if not is_admin:
             save_owner_property_message(message, incoming_text, chat_id, sender_id)
-        telegram_send(chat_id, answer)
         telegram_send_audio(chat_id, answer)
         logging.info("Telegram reply sent successfully for update_id=%s", data.get("update_id"))
     except requests.HTTPError as exc:
