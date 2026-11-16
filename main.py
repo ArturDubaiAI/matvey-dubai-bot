@@ -144,7 +144,7 @@ def telegram_send(chat_id, text):
 
 
 def telegram_send_audio(chat_id, text):
-    """Generate spoken reply with OpenAI TTS first; use Edge TTS as fallback."""
+    """Use only the approved Dmitry neural voice for Russian; never substitute another Russian voice."""
     if not TELEGRAM_API or not text:
         return
     spoken_text = re.sub(r"\[([^\]]+)\]\((https?://[^)]+)\)", r"\1", str(text))
@@ -182,8 +182,10 @@ def telegram_send_audio(chat_id, text):
             except Exception as exc:
                 logging.warning("Russian Edge TTS failed; trying OpenAI: error_type=%s", type(exc).__name__)
 
-        # OpenAI is the preferred voice for English and fallback for Russian.
-        if not generated and OPENAI_API_KEY:
+        # Russian voice is locked to the approved Dmitry voice. If it fails,
+        # do not send an unwanted substitute voice.
+        # OpenAI TTS is used only for English.
+        if not is_russian and not generated and OPENAI_API_KEY:
             try:
                 speech_response = requests.post(
                     "https://api.openai.com/v1/audio/speech",
