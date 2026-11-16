@@ -24,6 +24,36 @@ def health():
     }), 200
 
 
+@app.route("/telegram-status", methods=["GET"])
+def telegram_status():
+    """Safe diagnostic endpoint; never returns the bot token."""
+    if not TELEGRAM_API:
+        return jsonify({"status": "error", "reason": "token_not_configured"}), 503
+    try:
+        me_response = requests.get(f"{TELEGRAM_API}/getMe", timeout=10)
+        webhook_response = requests.get(f"{TELEGRAM_API}/getWebhookInfo", timeout=10)
+        me_response.raise_for_status()
+        webhook_response.raise_for_status()
+        me = me_response.json()
+        webhook = webhook_response.json()
+        if not me.get("ok") or not webhook.get("ok"):
+            return jsonify({"status": "telegram_api_error", "getMe_ok": me.get("ok"), "getWebhookInfo_ok": webhook.get("ok")}), 502
+        info = webhook.get("result", {})
+        return jsonify({
+            "status": "ok",
+            "bot_username": me.get("result", {}).get("username"),
+            "webhook_url": info.get("url"),
+            "pending_update_count": info.get("pending_update_count"),
+            "last_error_date": info.get("last_error_date"),
+            "last_error_message": info.get("last_error_message"),
+            "max_connections": info.get("max_connections"),
+            "allowed_updates": info.get("allowed_updates"),
+        }), 200
+    except requests.RequestException:
+        logging.exception("Telegram diagnostic request failed.")
+        return jsonify({"status": "error", "reason": "telegram_request_failed"}), 502
+
+
 @app.route("/telegram", methods=["POST"])
 def telegram():
     data = request.get_json(silent=True) or {}
