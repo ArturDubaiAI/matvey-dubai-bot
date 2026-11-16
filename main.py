@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import sqlite3
+import csv
 from datetime import datetime, timezone
 import threading
 import requests
@@ -72,7 +73,47 @@ def init_property_database():
                 updated_at TEXT NOT NULL
             )
         """)
+        existing_columns = {row[1] for row in conn.execute("PRAGMA table_info(owner_properties)")}
+        migrations = {
+            "lease_end_date": "TEXT",
+            "contact_after_date": "TEXT",
+            "contact_opt_in": "TEXT NOT NULL DEFAULT 'unknown'",
+            "last_contact_at": "TEXT",
+            "contract_notes": "TEXT",
+            "owner_or_tenant": "TEXT"
+        }
+        for column, definition in migrations.items():
+            if column not in existing_columns:
+                conn.execute(f"ALTER TABLE owner_properties ADD COLUMN {column} {definition}")
         conn.commit()
+
+def telegram_send_database_export(chat_id):
+    """Send current SQLite records as a CSV file to an authorized admin."""
+    if not TELEGRAM_API:
+        raise RuntimeError("Telegram token is not configured")
+    init_property_database()
+    output = io.StringIO()
+    with sqlite3.connect(MATVEY_DB_PATH, timeout=20) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute("SELECT * FROM owner_properties ORDER BY updated_at DESC").fetchall()
+        if not rows:
+            return 0
+        writer = csv.writer(output)
+        writer.writerow(rows[0].keys())
+        for row in rows:
+            writer.writerow([row[key] for key in row.keys()])
+    payload = output.getvalue().encode("utf-8-sig")
+    response = requests.post(
+        f"{TELEGRAM_API}/sendDocument",
+        data={"chat_id": chat_id, "caption": f"Экспорт базы объектов Матвея. Записей: {len(rows)}"},
+        files={"document": ("matvey_property_database.csv", payload, "text/csv")},
+        timeout=60,
+    )
+    response.raise_for_status()
+    if not response.json().get("ok"):
+        raise RuntimeError("Telegram sendDocument returned ok=false")
+    return len(rows)
+
 
 def save_owner_property_message(message, user_text, chat_id, sender_id):
     """Extract and upsert voluntarily supplied owner listing details into SQLite."""
@@ -104,6 +145,8 @@ def save_owner_property_message(message, user_text, chat_id, sender_id):
         "studio, apartment (квартира с bedroom count), house, villa, townhouse, penthouse, other. "
         "deal_type: rent или sale. bedrooms — целое число либо null. "
         "whatsapp_allowed/call_allowed — yes/no/unknown. "
+        "lease_end_date — дата окончания действующего договора строго YYYY-MM-DD, только если явно указана. "
+        "contact_opt_in — yes только при явном согласии на повторный контакт, иначе unknown/no. "
         "address — полный адрес, если указан; community — район/комьюнити; "
         "price и currency сохраняй как сказано. Не включай персональные данные, "
         "если пользователь их не предоставил как контакт для связи."
@@ -129,7 +172,9 @@ def save_owner_property_message(message, user_text, chat_id, sender_id):
             "availability": {"type": ["string", "null"]},
             "contact_phone": {"type": ["string", "null"]},
             "whatsapp_allowed": {"type": ["string", "null"], "enum": ["yes", "no", "unknown", None]},
-            "call_allowed": {"type": ["string", "null"], "enum": ["yes", "no", "unknown", None]}
+            "call_allowed": {"type": ["string", "null"], "enum": ["yes", "no", "unknown", None]},
+            "lease_end_date": {"type": ["string", "null"]},
+            "contact_opt_in": {"type": ["string", "null"], "enum": ["yes", "no", "unknown", None]}
         },
         "required": [
             "is_owner_listing", "language", "deal_type", "property_category",
@@ -171,8 +216,9 @@ def save_owner_property_message(message, user_text, chat_id, sender_id):
                     chat_id, telegram_user_id, language, deal_type, property_category,
                     bedrooms, property_type_detail, address, area, community, price,
                     currency, furnishing, availability, contact_phone, whatsapp_allowed,
-                    call_allowed, photo_file_ids, raw_last_message, created_at, updated_at
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    call_allowed, photo_file_ids, raw_last_message, created_at, updated_at,
+                    lease_end_date, contact_opt_in
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(chat_id) DO UPDATE SET
                     telegram_user_id=excluded.telegram_user_id,
                     language=COALESCE(excluded.language, language),
@@ -192,7 +238,9 @@ def save_owner_property_message(message, user_text, chat_id, sender_id):
                     call_allowed=COALESCE(excluded.call_allowed, call_allowed),
                     photo_file_ids=CASE WHEN excluded.photo_file_ids != '[]' THEN excluded.photo_file_ids ELSE photo_file_ids END,
                     raw_last_message=excluded.raw_last_message,
-                    updated_at=excluded.updated_at
+                    updated_at=excluded.updated_at,
+                    lease_end_date=COALESCE(excluded.lease_end_date, lease_end_date),
+                    contact_opt_in=CASE WHEN excluded.contact_opt_in IN ('yes','no') THEN excluded.contact_opt_in ELSE contact_opt_in END
             """, (
                 str(chat_id), str(sender_id or ""), record.get("language"),
                 record.get("deal_type"), record.get("property_category"), record.get("bedrooms"),
@@ -201,7 +249,8 @@ def save_owner_property_message(message, user_text, chat_id, sender_id):
                 record.get("furnishing"), record.get("availability"),
                 shared_phone or record.get("contact_phone"), record.get("whatsapp_allowed"),
                 record.get("call_allowed"), json.dumps(photo_ids, ensure_ascii=False),
-                (user_text or "")[:6000], now, now
+                (user_text or "")[:6000], now, now,
+                record.get("lease_end_date"), record.get("contact_opt_in") or "unknown"
             ))
             conn.commit()
     except Exception as exc:
@@ -685,7 +734,13 @@ def telegram():
     is_admin = bool(sender_id and sender_id in ADMIN_TELEGRAM_IDS)
 
     try:
-        if incoming_text.startswith("/myid"):
+        if incoming_text.startswith("/exportdb"):
+            if not is_admin:
+                answer = "Эта команда доступна только администратору."
+            else:
+                exported_count = telegram_send_database_export(chat_id)
+                answer = f"Экспортировано записей: {exported_count}." if exported_count else "База пока пустая."
+        elif incoming_text.startswith("/myid"):
             answer = f"Ваш Telegram user ID: {sender_id}"
         elif incoming_text.startswith("/reset"):
             answer = "Контекст этого диалога очищен. Начнём заново. Что ищем в Дубае?"
