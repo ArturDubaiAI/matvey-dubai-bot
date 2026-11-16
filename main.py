@@ -940,6 +940,8 @@ def telegram():
                 logging.exception("Owner intake failed; text reply was already sent: error_type=%s", type(exc).__name__)
 
         try:
+            # Send the approved voice note about one second after the text reply.
+            time.sleep(1)
             telegram_send_audio(chat_id, answer)
         except Exception as exc:
             logging.exception("Optional voice reply failed; text reply remains delivered: error_type=%s", type(exc).__name__)
