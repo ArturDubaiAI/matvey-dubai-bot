@@ -1,9 +1,12 @@
 import io
+import json
 import asyncio
 import tempfile
 import logging
 import os
 import re
+import sqlite3
+from datetime import datetime, timezone
 import threading
 import requests
 import edge_tts
@@ -33,11 +36,183 @@ RU_TTS_VOICE = "ru-RU-DmitryNeural"
 RU_TTS_RATE = "+8%"
 RU_TTS_PITCH = "+0Hz"
 
+# SQLite база объектов. Для постоянного хранения на Render подключите Persistent Disk
+# с mount path /var/data; путь можно переопределить через MATVEY_DB_PATH.
+MATVEY_DB_PATH = os.environ.get("MATVEY_DB_PATH", "/var/data/matvey_objects.db")
+
+def init_property_database():
+    db_dir = os.path.dirname(MATVEY_DB_PATH)
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
+    with sqlite3.connect(MATVEY_DB_PATH, timeout=20) as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS owner_properties (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id TEXT NOT NULL UNIQUE,
+                telegram_user_id TEXT,
+                language TEXT,
+                deal_type TEXT,
+                property_category TEXT,
+                bedrooms INTEGER,
+                property_type_detail TEXT,
+                address TEXT,
+                area TEXT,
+                community TEXT,
+                price TEXT,
+                currency TEXT,
+                furnishing TEXT,
+                availability TEXT,
+                contact_phone TEXT,
+                whatsapp_allowed TEXT,
+                call_allowed TEXT,
+                photo_file_ids TEXT,
+                raw_last_message TEXT,
+                status TEXT NOT NULL DEFAULT 'requires_review',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+        conn.commit()
+
+def save_owner_property_message(message, user_text, chat_id, sender_id):
+    """Extract and upsert voluntarily supplied owner listing details into SQLite."""
+    if not OPENAI_API_KEY or not chat_id:
+        return
+    photo_ids = [
+        item.get("file_id") for item in (message.get("photo") or [])
+        if item.get("file_id")
+    ]
+    contact = message.get("contact") or {}
+    shared_phone = contact.get("phone_number")
+    text_for_detection = (user_text or "").lower()
+    owner_signal = bool(
+        photo_ids or shared_phone or re.search(
+            r"сдаю|сдать|сдается|сдаётся|собственник|владелец|продаю|продать|"
+            r"арендуется|объект в аренду|property for rent|for rent|for sale|"
+            r"i am the owner|i'm the owner|my apartment|my property",
+            text_for_detection
+        )
+    )
+    if not owner_signal:
+        return
+    extraction_prompt = (
+        "Извлеки только факты из последнего сообщения владельца недвижимости. "
+        "Верни JSON строго по схеме. Не додумывай неизвестное: используй null. "
+        "is_owner_listing=true только если человек предлагает собственный объект "
+        "или явно действует от имени собственника. Категории property_category: "
+        "shared_room (подселение/место в общей комнате), hostel, room (отдельная комната), "
+        "studio, apartment (квартира с bedroom count), house, villa, townhouse, penthouse, other. "
+        "deal_type: rent или sale. bedrooms — целое число либо null. "
+        "whatsapp_allowed/call_allowed — yes/no/unknown. "
+        "address — полный адрес, если указан; community — район/комьюнити; "
+        "price и currency сохраняй как сказано. Не включай персональные данные, "
+        "если пользователь их не предоставил как контакт для связи."
+    )
+    schema = {
+        "type": "object",
+        "properties": {
+            "is_owner_listing": {"type": "boolean"},
+            "language": {"type": ["string", "null"]},
+            "deal_type": {"type": ["string", "null"], "enum": ["rent", "sale", None]},
+            "property_category": {"type": ["string", "null"], "enum": [
+                "shared_room", "hostel", "room", "studio", "apartment",
+                "house", "villa", "townhouse", "penthouse", "other", None
+            ]},
+            "bedrooms": {"type": ["integer", "null"]},
+            "property_type_detail": {"type": ["string", "null"]},
+            "address": {"type": ["string", "null"]},
+            "area": {"type": ["string", "null"]},
+            "community": {"type": ["string", "null"]},
+            "price": {"type": ["string", "null"]},
+            "currency": {"type": ["string", "null"]},
+            "furnishing": {"type": ["string", "null"]},
+            "availability": {"type": ["string", "null"]},
+            "contact_phone": {"type": ["string", "null"]},
+            "whatsapp_allowed": {"type": ["string", "null"], "enum": ["yes", "no", "unknown", None]},
+            "call_allowed": {"type": ["string", "null"], "enum": ["yes", "no", "unknown", None]}
+        },
+        "required": [
+            "is_owner_listing", "language", "deal_type", "property_category",
+            "bedrooms", "property_type_detail", "address", "area", "community",
+            "price", "currency", "furnishing", "availability", "contact_phone",
+            "whatsapp_allowed", "call_allowed"
+        ],
+        "additionalProperties": False
+    }
+    try:
+        response = requests.post(
+            OPENAI_RESPONSES_URL,
+            headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
+            json={
+                "model": "gpt-4.1-mini",
+                "instructions": extraction_prompt,
+                "input": (user_text or "")[:6000],
+                "text": {"format": {"type": "json_schema", "name": "owner_property_intake", "strict": True, "schema": schema}},
+                "max_output_tokens": 500,
+            },
+            timeout=30,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        extracted_text = payload.get("output_text") or ""
+        if not extracted_text:
+            for item in payload.get("output", []):
+                for part in item.get("content", []):
+                    if part.get("type") == "output_text":
+                        extracted_text += part.get("text", "")
+        record = json.loads(extracted_text)
+        if not record.get("is_owner_listing"):
+            return
+        now = datetime.now(timezone.utc).isoformat()
+        init_property_database()
+        with sqlite3.connect(MATVEY_DB_PATH, timeout=20) as conn:
+            conn.execute("""
+                INSERT INTO owner_properties (
+                    chat_id, telegram_user_id, language, deal_type, property_category,
+                    bedrooms, property_type_detail, address, area, community, price,
+                    currency, furnishing, availability, contact_phone, whatsapp_allowed,
+                    call_allowed, photo_file_ids, raw_last_message, created_at, updated_at
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(chat_id) DO UPDATE SET
+                    telegram_user_id=excluded.telegram_user_id,
+                    language=COALESCE(excluded.language, language),
+                    deal_type=COALESCE(excluded.deal_type, deal_type),
+                    property_category=COALESCE(excluded.property_category, property_category),
+                    bedrooms=COALESCE(excluded.bedrooms, bedrooms),
+                    property_type_detail=COALESCE(excluded.property_type_detail, property_type_detail),
+                    address=COALESCE(excluded.address, address),
+                    area=COALESCE(excluded.area, area),
+                    community=COALESCE(excluded.community, community),
+                    price=COALESCE(excluded.price, price),
+                    currency=COALESCE(excluded.currency, currency),
+                    furnishing=COALESCE(excluded.furnishing, furnishing),
+                    availability=COALESCE(excluded.availability, availability),
+                    contact_phone=COALESCE(excluded.contact_phone, contact_phone),
+                    whatsapp_allowed=COALESCE(excluded.whatsapp_allowed, whatsapp_allowed),
+                    call_allowed=COALESCE(excluded.call_allowed, call_allowed),
+                    photo_file_ids=CASE WHEN excluded.photo_file_ids != '[]' THEN excluded.photo_file_ids ELSE photo_file_ids END,
+                    raw_last_message=excluded.raw_last_message,
+                    updated_at=excluded.updated_at
+            """, (
+                str(chat_id), str(sender_id or ""), record.get("language"),
+                record.get("deal_type"), record.get("property_category"), record.get("bedrooms"),
+                record.get("property_type_detail"), record.get("address"), record.get("area"),
+                record.get("community"), record.get("price"), record.get("currency"),
+                record.get("furnishing"), record.get("availability"),
+                shared_phone or record.get("contact_phone"), record.get("whatsapp_allowed"),
+                record.get("call_allowed"), json.dumps(photo_ids, ensure_ascii=False),
+                (user_text or "")[:6000], now, now
+            ))
+            conn.commit()
+    except Exception as exc:
+        logging.error("Owner property intake storage failed: error_type=%s", type(exc).__name__)
+
+
 SYSTEM_INSTRUCTIONS = (
     "ТВОЯ ЛИЧНОСТЬ И РОЛЬ: Ты Матвей — AI-ассистент команды Артура по недвижимости в Дубае. Артур — владелец и руководитель проекта. Не путай роли. Не называй каждого собеседника Артуром. Если спрашивают, кто ты, честно отвечай: «Я Матвей, AI-ассистент команды Артура по недвижимости в Дубае». Пиши естественно, коротко и по-человечески, но не скрывай, что ты AI, и не выдавай себя за Артура или человека."
     "ГЛАВНЫЙ РЕЗУЛЬТАТ: Помогай компании Артура находить реальных клиентов, собственников, объекты и партнёров для аренды, покупки и продажи недвижимости в Дубае. Приоритет — полезные, проверяемые заявки и актуальные объекты, а не количество сообщений. Не ищи инвесторов в жилые дома, строительство домов или сторонние строительные проекты: это не задача компании."
     "ЯЗЫКОВОЙ ПРИОРИТЕТ: Первый приоритет — русскоговорящие клиенты, собственники и агенты из России, СНГ и русскоязычных сообществ по всему миру. Второй приоритет — англоязычные клиенты, собственники и агенты. Англоязычные обращения не отбрасывай: если запрос связан с недвижимостью в Дубае и полезен компании, обрабатывай его наравне с подходящим русскоязычным запросом. Определяй язык по сообщению: русский — отвечай по-русски, английский — по-английски. Не заставляй Артура переводить переписку. Внутренние отчёты и сводки Артуру пиши по-русски."
-    "ТИПЫ ЗАПРОСОВ И ОБЪЕКТОВ: В первую очередь ищи и квалифицируй аренду квартир Studio, 1 Bedroom и 2 Bedroom; также обрабатывай другие квартиры и виллы, если запрос подходит компании. Обрабатывай покупателей готовой недвижимости и запросы собственников, желающих сдать или продать объект. Примеры запросов: студия в JBR (если клиент написал «GBR», уточни, не имел ли он в виду JBR); квартира с одной или двумя спальнями; запрос на покупку; собственник ищет арендатора; агент ищет партнёра в Дубае."
+    "КАТЕГОРИИ ОБЪЕКТОВ ДЛЯ БАЗЫ: Каждый объект собственника классифицируй строго в отдельную категорию: Подселение/место в общей комнате (shared_room); Хостел (hostel); Отдельная комната (room); Студия (studio); Квартира с 1, 2, 3, 4 и более спальнями (apartment + bedrooms=1/2/3/4...); Дом (house); Вилла (villa); Таунхаус (townhouse); Пентхаус (penthouse); Другое (other). Не смешивай подселение, хостел и отдельную комнату. Для квартир сохраняй точное число спален отдельно от категории: Studio — bedrooms=0, One Bedroom — 1, Two Bedroom — 2, Three Bedroom — 3 и так далее. Каждое новое сообщение собственника дополняет существующую карточку, а не создаёт новую, если это тот же Telegram-чат и тот же объект. Сохраняй только сведения, которые человек добровольно сообщил для делового контакта. Статус новой карточки — «требует проверки» до подтверждения данных. Не сообщай собственнику, что запись сохранена, если база недоступна или запись завершилась ошибкой.""ТИПЫ ЗАПРОСОВ И ОБЪЕКТОВ: В первую очередь ищи и квалифицируй аренду квартир Studio, 1 Bedroom и 2 Bedroom; также обрабатывай другие квартиры и виллы, если запрос подходит компании. Обрабатывай покупателей готовой недвижимости и запросы собственников, желающих сдать или продать объект. Примеры запросов: студия в JBR (если клиент написал «GBR», уточни, не имел ли он в виду JBR); квартира с одной или двумя спальнями; запрос на покупку; собственник ищет арендатора; агент ищет партнёра в Дубае."
     "КВАЛИФИКАЦИЯ КЛИЕНТА: Собирай только необходимые параметры, задавая по одному короткому вопросу за раз: аренда или покупка; район/комьюнити; тип объекта и спальни; бюджет и валюта; дата въезда или покупки; срок аренды; меблировка; число жильцов и важные пожелания. Для продавца/собственника уточняй район, тип, спальни, цену, статус объекта, доступность к просмотру и полномочия на размещение. Не повторяй уже сообщённые данные."
     "ОБЯЗАТЕЛЬНОЕ ПРАВИЛО ПАМЯТИ ДИАЛОГА И ВОПРОСОВ: Перед каждым ответом внимательно просмотри всю доступную историю текущего чата, включая расшифровки голосовых сообщений. Составь внутренний список уже известных ответов и недостающих полей. Считай сообщённые клиентом сведения заполненными, даже если они были сказаны в одном длинном сообщении или голосом. Никогда не спрашивай повторно, аренда это или покупка, район, бюджет, число жильцов, дату въезда, тип объекта и другие параметры, если клиент уже это сообщил. Не начинай анкету заново после каждого сообщения. Не задавай уже отвеченный вопрос другими словами. Если клиент сообщил несколько параметров сразу, запомни их все и переходи к следующему действительно неизвестному важному параметру. Задавай ровно один короткий вопрос за сообщение. Если информации достаточно, не продолжай опрос ради опроса: предложи следующий практический шаг или передай, что команда подготовит подборку. Если ответ неоднозначен, уточни только неоднозначную часть. Если история чата недоступна или была очищена командой /reset, не притворяйся, что помнишь её."
     "ПОРЯДОК КВАЛИФИКАЦИИ АРЕНДЫ: Сначала извлеки уже сообщённые сведения. Уточняй по одному только то, чего не хватает: район; тип жилья и спальни; бюджет и валюта; дата заселения; срок аренды (например, годовой договор или другой срок); количество жильцов; меблировка; предпочтения; удобный способ оплаты (2/4/6/12 чеков или помесячно, если доступно); готовность к депозиту; наличие Emirates ID для годового договора; готовность работать через агентство. Не утверждай, что депозит обязателен во всех случаях; условия зависят от объекта и собственника. Не обещай помесячную оплату или конкретные условия, пока они не подтверждены."
@@ -554,6 +729,8 @@ def telegram():
                 answer = "Пока понимаю текст и голосовые сообщения. Отправьте, пожалуйста, текст или голос."
         if not answer:
             answer = "Не получилось подготовить ответ. Попробуйте ещё раз."
+        if not is_admin:
+            save_owner_property_message(message, incoming_text, chat_id, sender_id)
         telegram_send(chat_id, answer)
         telegram_send_audio(chat_id, answer)
         logging.info("Telegram reply sent successfully for update_id=%s", data.get("update_id"))
