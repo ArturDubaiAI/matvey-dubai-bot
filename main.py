@@ -273,6 +273,9 @@ def register_child_agent(raw_spec):
     now = datetime.now(timezone.utc).isoformat()
     init_property_database()
     with sqlite3.connect(MATVEY_DB_PATH, timeout=20) as conn:
+        agent_count = conn.execute("SELECT COUNT(*) FROM child_agents").fetchone()[0]
+        if agent_count >= 50:
+            raise ValueError("Достигнут лимит в 50 дочерних агентов. Удали или архивируй ненужный профиль перед созданием нового.")
         key, suffix = base_key, 2
         while conn.execute("SELECT 1 FROM child_agents WHERE agent_key=?", (key,)).fetchone():
             key, suffix = f"{base_key[:27]}_{suffix}", suffix + 1
