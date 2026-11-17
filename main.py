@@ -13,6 +13,7 @@ import threading
 import time
 import requests
 import edge_tts
+from langdetect import detect, LangDetectException
 from flask import Flask, request, jsonify
 
 app = Flask(__name__)
@@ -712,10 +713,13 @@ def telegram_send_audio(chat_id, text):
 
         generated = False
         is_armenian = bool(re.search(r"[\u0530-\u058F]", spoken_text))
-        has_cyrillic = bool(re.search(r"[А-Яа-яЁёІіЇїЄєЎў]", spoken_text))
-        # Keep the approved Russian voice for Cyrillic; multilingual OpenAI TTS handles other scripts.
-        is_russian = has_cyrillic and not is_armenian
-        is_english = bool(re.search(r"[A-Za-z]", spoken_text)) and not has_cyrillic and not is_armenian
+        try:
+            detected_language = detect(spoken_text[:1200]).lower()
+        except LangDetectException:
+            detected_language = "ru" if re.search(r"[А-Яа-яЁё]", spoken_text) else "en"
+        # Keep the approved Russian voice only for Russian; other Cyrillic languages use multilingual TTS.
+        is_russian = detected_language == "ru" and not is_armenian
+        is_english = detected_language == "en"
 
         # Armenian replies use a native Armenian male neural voice.
         if is_armenian:
@@ -801,31 +805,35 @@ def telegram_send_audio(chat_id, text):
             except Exception as exc:
                 logging.warning("OpenAI TTS failed; trying Edge fallback: error_type=%s", type(exc).__name__)
 
-        # Last-resort Edge voice for English. Russian was already attempted above.
-        if not generated and is_english:
-            async def render_english(path, voice):
-                communicator = edge_tts.Communicate(
-                    spoken_text,
-                    voice=voice,
-                    rate="+0%",
-                    pitch="+0Hz",
-                )
-                await communicator.save(path)
-
-            last_error = None
-            for voice in ["en-US-GuyNeural", "en-US-JennyNeural"]:
+        # Language-matched Edge TTS fallback for common non-Russian languages.
+        if not generated:
+            edge_voice_by_language = {
+                "en": "en-US-GuyNeural", "hy": "hy-AM-HaykNeural",
+                "ar": "ar-AE-HamdanNeural", "hi": "hi-IN-MadhurNeural",
+                "ur": "ur-PK-AsadNeural", "fr": "fr-FR-HenriNeural",
+                "de": "de-DE-ConradNeural", "es": "es-ES-AlvaroNeural",
+                "zh-cn": "zh-CN-YunxiNeural", "ja": "ja-JP-KeitaNeural",
+                "tr": "tr-TR-AhmetNeural", "it": "it-IT-DiegoNeural",
+                "pt": "pt-BR-AntonioNeural", "uk": "uk-UA-OstapNeural",
+            }
+            fallback_voice = edge_voice_by_language.get(detected_language)
+            if fallback_voice:
+                async def render_fallback(path):
+                    communicator = edge_tts.Communicate(
+                        spoken_text, voice=fallback_voice, rate="+0%", pitch="+0Hz"
+                    )
+                    await communicator.save(path)
                 try:
                     if os.path.exists(temp_path):
                         os.remove(temp_path)
-                    asyncio.run(render_english(temp_path, voice))
-                    if os.path.getsize(temp_path) > 1000:
-                        generated = True
-                        break
-                    last_error = RuntimeError("TTS generated an empty audio file")
+                    asyncio.run(render_fallback(temp_path))
+                    generated = os.path.exists(temp_path) and os.path.getsize(temp_path) > 1000
                 except Exception as exc:
-                    last_error = exc
-            if not generated:
-                raise last_error or RuntimeError("No TTS provider generated audio")
+                    logging.warning(
+                        "Language-matched Edge TTS fallback failed: language=%s error_type=%s",
+                        detected_language, type(exc).__name__
+                    )
+
 
         if not generated:
             raise RuntimeError("No TTS provider generated audio")
@@ -948,6 +956,51 @@ def openai_answer(user_text, chat_id=None, is_admin=False):
                 )
                 conn.commit()
         return answer
+
+
+def localized_start_greeting(language_code, is_admin=False):
+    """Create a short first-contact greeting in the Telegram user's UI language."""
+    language_code = (language_code or "ru").strip().lower()[:16]
+    if not OPENAI_API_KEY:
+        return (
+            "Артур, привет. Я Матвей, твой AI-агент. Готов выполнять рабочие поручения."
+            if is_admin else
+            "Здравствуйте! Я Матвей, AI-агент по недвижимости Дубая. Помогаю с арендой, покупкой и продажей."
+        )
+    role = (
+        "Greet Artur as the company owner and administrator. Do not ask who he is. "
+        "Say you are ready for his work instructions."
+        if is_admin else
+        "Greet the person naturally as Matvey, an AI agent for Dubai real estate. "
+        "Do not ask a questionnaire or ask who they are. Briefly say how you can help."
+    )
+    try:
+        response = requests.post(
+            OPENAI_RESPONSES_URL,
+            headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
+            json={
+                "model": "gpt-4.1-mini",
+                "instructions": (
+                    f"{role} Reply only in the language matching this locale code: {language_code}. "
+                    "Use natural native phrasing and one or two short sentences. Never add a follow-up questionnaire."
+                ),
+                "input": "Write the greeting now.",
+                "max_output_tokens": 120,
+            },
+            timeout=25,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        greeting_text = (payload.get("output_text") or "").strip()
+        if greeting_text:
+            return greeting_text
+    except Exception as exc:
+        logging.warning("Localized greeting generation failed: error_type=%s", type(exc).__name__)
+    return (
+        "Артур, привет. Я Матвей, твой AI-агент. Готов выполнять рабочие поручения."
+        if is_admin else
+        "Здравствуйте! Я Матвей, AI-агент по недвижимости Дубая. Помогаю с арендой, покупкой и продажей."
+    )
 
 
 def telegram_voice_to_text(message):
@@ -1144,6 +1197,7 @@ def telegram():
     sender_id = str((message.get("from") or {}).get("id", ""))
     is_admin = bool(sender_id and sender_id in ADMIN_TELEGRAM_IDS)
 
+    conversation_text = incoming_text
     try:
         if incoming_text.startswith("/exportdb"):
             if not is_admin:
@@ -1213,28 +1267,8 @@ def telegram():
                 conn.commit()
             answer = "Контекст этого диалога очищен. Начнём заново. Что ищем в Дубае?"
         elif incoming_text.startswith("/start"):
-            language_code = (message.get("from", {}).get("language_code") or "").lower()
-            if is_admin:
-                if language_code.startswith("en"):
-                    answer = (
-                        "Welcome back, Artur. I'm Matvey, your AI agent. "
-                        "I'm in administrator mode and ready for your work instructions."
-                    )
-                else:
-                    answer = (
-                        "Артур, привет. Я Матвей, твой AI-агент. "
-                        "Режим руководителя активен. Готов выполнять рабочие поручения."
-                    )
-            elif language_code.startswith("en"):
-                answer = (
-                    "Hello! I'm Matvey, an AI agent for Dubai real estate. "
-                    "I can help with renting, buying, selling and property enquiries."
-                )
-            else:
-                answer = (
-                    "Здравствуйте! Я Матвей, AI-агент по недвижимости Дубая. "
-                    "Помогаю с арендой, покупкой, продажей и вопросами по объектам."
-                )
+            language_code = (message.get("from", {}).get("language_code") or "ru").lower()
+            answer = localized_start_greeting(language_code, is_admin=is_admin)
             # Persist the greeting so the next message continues this conversation.
             init_property_database()
             with sqlite3.connect(MATVEY_DB_PATH, timeout=20) as conn:
@@ -1258,6 +1292,7 @@ def telegram():
                 if not transcript:
                     answer = "Не удалось разобрать голосовое сообщение. Попробуйте записать его ещё раз."
                 else:
+                    conversation_text = transcript
                     answer = openai_answer(transcript, chat_id, is_admin=is_admin)
             elif incoming_text:
                 answer = openai_answer(incoming_text, chat_id, is_admin=is_admin)
@@ -1289,15 +1324,15 @@ def telegram():
             except Exception as exc:
                 logging.exception("Photo metadata save failed; text reply was already sent: error_type=%s", type(exc).__name__)
 
-        if not is_admin or message.get("photo") or re.search(r"сдаю|сдать|сдается|сдаётся|продаю|продать|for rent|for sale", incoming_text, re.I):
+        if not is_admin or message.get("photo") or re.search(r"сдаю|сдать|сдается|сдаётся|продаю|продать|for rent|for sale", conversation_text, re.I):
             try:
-                save_owner_property_message(message, incoming_text, chat_id, sender_id)
+                save_owner_property_message(message, conversation_text, chat_id, sender_id)
             except Exception as exc:
                 logging.exception("Owner intake failed; text reply was already sent: error_type=%s", type(exc).__name__)
 
-        if not is_admin and incoming_text:
+        if not is_admin and conversation_text:
             try:
-                save_crm_contact(incoming_text, chat_id, sender_id)
+                save_crm_contact(conversation_text, chat_id, sender_id)
             except Exception as exc:
                 logging.exception("CRM intake failed; text reply was already sent: error_type=%s", type(exc).__name__)
 
