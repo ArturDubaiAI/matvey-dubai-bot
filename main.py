@@ -168,7 +168,58 @@ def init_property_database():
                 processed_at TEXT NOT NULL
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS child_agents (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                agent_key TEXT NOT NULL UNIQUE,
+                display_name TEXT NOT NULL,
+                specialization TEXT NOT NULL,
+                language_policy TEXT NOT NULL DEFAULT 'auto',
+                system_notes TEXT NOT NULL DEFAULT '',
+                token_env_var TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'draft_token_required',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
         conn.commit()
+
+def register_child_agent(raw_spec):
+    """Create a child-agent profile; BotFather secrets are never generated or stored here."""
+    parts = [part.strip() for part in re.split(r"\\s*[|;]\\s*", raw_spec, maxsplit=2)]
+    if len(parts) < 2 or not parts[0] or not parts[1]:
+        raise ValueError("Формат: /createagent Название | Специализация | Язык")
+    display_name, specialization = parts[0], parts[1]
+    language_policy = parts[2] if len(parts) > 2 and parts[2] else "auto"
+    base_key = re.sub(r"[^a-z0-9]+", "_", display_name.lower()).strip("_")[:32] or "agent"
+    now = datetime.now(timezone.utc).isoformat()
+    init_property_database()
+    with sqlite3.connect(MATVEY_DB_PATH, timeout=20) as conn:
+        key, suffix = base_key, 2
+        while conn.execute("SELECT 1 FROM child_agents WHERE agent_key=?", (key,)).fetchone():
+            key, suffix = f"{base_key[:27]}_{suffix}", suffix + 1
+        token_env_var = "TELEGRAM_TOKEN_" + key.upper()
+        conn.execute(
+            """INSERT INTO child_agents (
+                agent_key, display_name, specialization, language_policy,
+                token_env_var, status, created_at, updated_at
+            ) VALUES (?,?,?,?,?,?,?,?)""",
+            (key, display_name[:100], specialization[:300], language_policy[:60],
+             token_env_var, "draft_token_required", now, now)
+        )
+        conn.commit()
+    return {"agent_key": key, "display_name": display_name, "specialization": specialization,
+            "language_policy": language_policy, "token_env_var": token_env_var}
+
+
+def list_child_agents():
+    init_property_database()
+    with sqlite3.connect(MATVEY_DB_PATH, timeout=20) as conn:
+        return conn.execute(
+            "SELECT agent_key, display_name, specialization, language_policy, token_env_var, status "
+            "FROM child_agents ORDER BY id"
+        ).fetchall()
+
 
 def claim_telegram_update(update_id):
     """Atomically ignore Telegram webhook retries; retain IDs for 30 days."""
@@ -661,8 +712,10 @@ def telegram_send_audio(chat_id, text):
 
         generated = False
         is_armenian = bool(re.search(r"[\\u0530-\\u058F]", spoken_text))
-        is_russian = bool(re.search(r"[А-Яа-яЁё]", spoken_text)) and not is_armenian
-        is_english = bool(re.search(r"[A-Za-z]", spoken_text)) and not is_russian and not is_armenian
+        has_cyrillic = bool(re.search(r"[А-Яа-яЁёІіЇїЄєЎў]", spoken_text))
+        # Keep the approved Russian voice for Cyrillic; multilingual OpenAI TTS handles other scripts.
+        is_russian = has_cyrillic and not is_armenian
+        is_english = bool(re.search(r"[A-Za-z]", spoken_text)) and not has_cyrillic and not is_armenian
 
         # Armenian replies use a native Armenian male neural voice.
         if is_armenian:
@@ -801,6 +854,14 @@ def telegram_send_audio(chat_id, text):
 # Per-chat conversation locks. Dialogue history itself is persisted in SQLite.
 CHAT_LOCKS = {}
 CHAT_LOCKS_GUARD = threading.Lock()
+SYSTEM_INSTRUCTIONS += (
+    "\\n\\nУНИВЕРСАЛЬНЫЙ ЯЗЫКОВОЙ РЕЖИМ: Понимай и отвечай на языке последнего сообщения пользователя независимо от того, какой это язык: русский, английский, арабский, армянский, хинди, урду, французский, немецкий, испанский, китайский, японский, турецкий, персидский, итальянский, португальский и другие. Не ограничивайся списком языков. Сохраняй исходный язык, алфавит, имена, адреса и смысл. Если пользователь смешивает языки, отвечай естественно на основном языке его сообщения. Не переключай на русский или английский без просьбы. Голосовое сообщение сначала точно расшифруй на исходном языке, затем ответь на том же языке; не переводи его автоматически.\\n"
+    "ЕСТЕСТВЕННЫЙ ЧЕЛОВЕЧЕСКИЙ ДИАЛОГ: Общайся тепло, спокойно и живо, как компетентный коллега, а не как анкета или автоответчик. Можно коротко реагировать на эмоцию, благодарить, поддерживать разговор, объяснять следующий шаг и проявлять инициативу. Не начинай каждый ответ с приветствия. Не задавай механические вопросы и не превращай диалог в опросник. Сначала используй всё, что уже сообщил человек, включая голосовые сообщения и историю. Задавай только один действительно необходимый вопрос за раз. Если можешь выполнить полезное действие без уточнения — выполняй. Если человек просто делится информацией, отвечай по смыслу, не обязательно заканчивая вопросом. Не будь чрезмерно кратким, если пользователю нужно нормальное объяснение; но и не растягивай простой ответ. Никогда не притворяйся человеком: если прямо спрашивают, честно говори, что ты AI-агент.\\n"
+    "ПОИСК КОНКРЕТНЫХ ОБЪЯВЛЕНИЙ — ПРИОРИТЕТ: Когда пользователь просит найти квартиры, виллы или коммерческие объекты, используй веб-поиск и возвращай отдельные объявления, а не порталы. Каждая позиция должна содержать прямой URL индивидуальной карточки объявления. Ссылки на главные страницы Bayut, Property Finder, Dubizzle, агрегаторы, общие фильтры и страницы результатов поиска запрещены как результат подбора. Если найден только портал или страница результатов, продолжи поиск по конкретному зданию/району/типу и формулировкам объявления. Не включай ссылку в подтверждённую подборку, пока не убедился, что она ведёт на отдельный листинг. Приоритет — объявления от собственников; отмечай owner-direct только при явном доказательстве в источнике. Для каждого объекта укажи прямую ссылку, цену и период, спальни/тип, район/здание, дату проверки и публичный контакт, если он действительно опубликован. Если конкретные карточки не удалось проверить, скажи прямо: «Не нашёл подтверждённых отдельных объявлений», а не заменяй их ссылками на сайты. Не выдумывай URL, цены, телефоны или наличие.\\n"
+    "РУКОВОДИТЕЛЬ И СОЗДАНИЕ ДОЧЕРНИХ АГЕНТОВ: Только подтверждённый Telegram user ID из ADMIN_TELEGRAM_IDS даёт административные права. Артур — руководитель. Не спрашивай его, кто он, не используй клиентское приветствие и не проводи анкету; принимай свободные поручения, докладывай конкретно и продолжай текущую задачу. По запросу Артура создавай профили дочерних AI-агентов с отдельными специализациями, языковой политикой, системными правилами и изолированным контекстом. Не утверждай, что дочерний Telegram-бот запущен, пока не добавлен отдельный токен BotFather, настроен webhook и проверена работа. Никогда не создавай и не выдумывай токены; не проси присылать секреты в обычный чат, используй защищённые переменные окружения.\\n"
+    "ОБРАБОТКА ГОЛОСА: Голосовое сообщение и текст равноправны. Сохраняй расшифровку в историю диалога, чтобы факты из голоса не терялись. Отвечай текстом и голосом на том же языке, если синтез речи доступен; если голосовой синтез для языка недоступен, обязательно отправь текстовый ответ и не выдавай это за полную голосовую поддержку.\\n"
+)
+
 MAX_HISTORY_MESSAGES = 16
 
 
@@ -918,11 +979,7 @@ def telegram_voice_to_text(message):
         headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
         data=[
             ("model", "gpt-transcribe"),
-            ("prompt", "Transcribe the speaker verbatim in the original spoken language. Do not translate. The recording may be in Armenian, Russian, English, or Arabic. Preserve the original language and writing system."),
-            ("languages[]", "hy"),
-            ("languages[]", "ru"),
-            ("languages[]", "en"),
-            ("languages[]", "ar"),
+            ("prompt", "Identify the language automatically. Transcribe every spoken word verbatim in the original language and writing system. Do not translate, summarize, or normalize names, places, numbers, or property terms. The recording may be in any language or may switch between languages."),
         ],
         files={"file": ("telegram-voice.ogg", io.BytesIO(audio_response.content), "audio/ogg")},
         timeout=90,
@@ -1108,6 +1165,34 @@ def telegram():
                     "Режим руководителя не активен для этого Telegram-аккаунта. "
                     "ID не найден в настройке ADMIN_TELEGRAM_IDS."
                 )
+        elif incoming_text.startswith("/agents"):
+            if not is_admin:
+                answer = "Эта команда доступна только руководителю."
+            else:
+                agents = list_child_agents()
+                if not agents:
+                    answer = "Дочерних агентов пока нет. Создай профиль командой: /createagent Название | Специализация | Язык"
+                else:
+                    answer = "Дочерние агенты:\\n" + "\\n".join(
+                        f"• {row[1]} ({row[0]}) — {row[2]}; язык: {row[3]}; статус: {row[5]}; токен: {row[4]}"
+                        for row in agents
+                    )
+        elif incoming_text.startswith("/createagent"):
+            if not is_admin:
+                answer = "Эта команда доступна только руководителю."
+            else:
+                raw_spec = incoming_text[len("/createagent"):].strip()
+                try:
+                    agent = register_child_agent(raw_spec)
+                    answer = (
+                        f"Профиль агента «{agent['display_name']}» создан.\\n"
+                        f"Ключ: {agent['agent_key']}\\nСпециализация: {agent['specialization']}\\n"
+                        f"Язык: {agent['language_policy']}\\n"
+                        f"Статус: черновик — требуется отдельный токен BotFather в защищённой переменной "
+                        f"{agent['token_env_var']}, затем настройка webhook и проверка запуска."
+                    )
+                except ValueError as exc:
+                    answer = str(exc)
         elif incoming_text.startswith("/stats"):
             if not is_admin:
                 answer = "Эта команда доступна только руководителю."
