@@ -1567,8 +1567,10 @@ def inspect_and_store_group_message(message):
         return False
     if not re.search(
         r"собственник|владелец|сдаю|сдам|продаю|продам|сдается|сдаётся|"
+        r"сниму|снять|ищу\\s+(?:квартир|студ|комнат|вилл|дом|жиль)|куплю|покупаю|"
         r"аренда|квартира|вилла|студия|комнат|for rent|for sale|owner|landlord|"
-        r"property|apartment|villa|studio|rent|بيع|إيجار",
+        r"looking\\s+to\\s+rent|want\\s+to\\s+rent|seeking\\s+(?:an?\\s+)?(?:apartment|villa|room|home)|"
+        r"looking\\s+to\\s+buy|want\\s+to\\s+buy|buyer|tenant|property|apartment|villa|studio|rent|بيع|إيجار",
         raw_text, re.I
     ):
         return False
