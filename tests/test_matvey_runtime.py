@@ -22,6 +22,13 @@ class MatveyRuntimeTests(unittest.TestCase):
         self.assertNotIn("propertyfinder.ae", cleaned)
         self.assertIn("отдельные объявления", cleaned)
 
+    def test_generic_portal_markdown_link_keeps_label_without_url(self):
+        answer = "Portal: [Bayut](https://www.bayut.com/)"
+        cleaned = main.remove_generic_portal_urls(answer)
+        self.assertIn("Bayut", cleaned)
+        self.assertNotIn("https://www.bayut.com/", cleaned)
+        self.assertNotIn("Bayut]()", cleaned)
+
     def test_individual_listing_url_is_preserved(self):
         url = "https://www.bayut.com/property/details-1234567.html"
         self.assertIn(url, main.remove_generic_portal_urls("Listing: " + url))
