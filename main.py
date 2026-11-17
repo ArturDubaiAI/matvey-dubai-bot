@@ -7,6 +7,7 @@ import os
 import re
 import sqlite3
 import csv
+import zipfile
 from datetime import datetime, timezone, timedelta
 import threading
 import time
@@ -188,31 +189,40 @@ def claim_telegram_update(update_id):
 
 
 def telegram_send_database_export(chat_id):
-    """Send current SQLite records as a CSV file to an authorized admin."""
+    """Send all CRM tables as one ZIP archive to an authorized administrator."""
     if not TELEGRAM_API:
         raise RuntimeError("Telegram token is not configured")
     init_property_database()
-    output = io.StringIO()
+    tables = ("owner_properties", "client_leads", "partner_contacts")
+    archive_buffer = io.BytesIO()
+    total_rows = 0
     with sqlite3.connect(MATVEY_DB_PATH, timeout=20) as conn:
         conn.row_factory = sqlite3.Row
-        rows = conn.execute("SELECT * FROM owner_properties ORDER BY updated_at DESC").fetchall()
-        if not rows:
-            return 0
-        writer = csv.writer(output)
-        writer.writerow(rows[0].keys())
-        for row in rows:
-            writer.writerow([row[key] for key in row.keys()])
-    payload = output.getvalue().encode("utf-8-sig")
+        with zipfile.ZipFile(archive_buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            for table in tables:
+                rows = conn.execute(f"SELECT * FROM {table} ORDER BY updated_at DESC").fetchall()
+                total_rows += len(rows)
+                output = io.StringIO()
+                writer = csv.writer(output)
+                if rows:
+                    writer.writerow(rows[0].keys())
+                    for row in rows:
+                        writer.writerow([row[key] for key in row.keys()])
+                else:
+                    columns = [item[1] for item in conn.execute(f"PRAGMA table_info({table})")]
+                    writer.writerow(columns)
+                archive.writestr(f"{table}.csv", output.getvalue())
+    archive_buffer.seek(0)
     response = requests.post(
         f"{TELEGRAM_API}/sendDocument",
-        data={"chat_id": chat_id, "caption": f"Экспорт базы объектов Матвея. Записей: {len(rows)}"},
-        files={"document": ("matvey_property_database.csv", payload, "text/csv")},
+        data={"chat_id": chat_id, "caption": f"Полный экспорт CRM Матвея. Всего записей: {total_rows}."},
+        files={"document": ("matvey_full_crm_export.zip", archive_buffer.getvalue(), "application/zip")},
         timeout=60,
     )
     response.raise_for_status()
     if not response.json().get("ok"):
         raise RuntimeError("Telegram sendDocument returned ok=false")
-    return len(rows)
+    return total_rows
 
 
 def save_owner_property_message(message, user_text, chat_id, sender_id):
