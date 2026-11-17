@@ -1302,6 +1302,8 @@ def openai_answer(user_text, chat_id=None, is_admin=False):
 def localized_start_greeting(language_code, is_admin=False):
     """Create a short first-contact greeting in the Telegram user's UI language."""
     language_code = (language_code or "ru").strip().lower()[:16]
+    if language_code.startswith("ru") and not is_admin:
+        return "Здравствуйте! Меня зовут Матвей. Я AI-помощник Артура по недвижимости. Чем могу вам помочь?"
     if not OPENAI_API_KEY:
         return (
             "Артур, привет. Я Матвей, твой AI-агент. Готов выполнять рабочие поручения."
