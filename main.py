@@ -456,7 +456,7 @@ def telegram_send_database_export(chat_id):
     if not TELEGRAM_API:
         raise RuntimeError("Telegram token is not configured")
     init_property_database()
-    tables = ("owner_properties", "client_leads", "partner_contacts")
+    tables = ("owner_properties", "client_leads", "partner_contacts", "child_agents")
     archive_buffer = io.BytesIO()
     total_rows = 0
     with sqlite3.connect(MATVEY_DB_PATH, timeout=20) as conn:
@@ -1495,9 +1495,11 @@ def telegram():
                     properties = conn.execute("SELECT COUNT(*) FROM owner_properties").fetchone()[0]
                     leads = conn.execute("SELECT COUNT(*) FROM client_leads").fetchone()[0]
                     partners = conn.execute("SELECT COUNT(*) FROM partner_contacts").fetchone()[0]
+                    agents = conn.execute("SELECT COUNT(*) FROM child_agents").fetchone()[0]
                 answer = (
                     f"База Матвея: объектов собственников — {properties}; "
-                    f"клиентских заявок — {leads}; партнёров — {partners}."
+                    f"клиентских заявок — {leads}; партнёров — {partners}; "
+                    f"дочерних агентов — {agents}."
                 )
         elif incoming_text.startswith("/reset"):
             init_property_database()
