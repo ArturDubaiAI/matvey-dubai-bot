@@ -997,15 +997,15 @@ def telegram_send_audio(chat_id, text, telegram_api=None):
         except LangDetectException:
             if is_armenian:
                 detected_language = "hy"
-            elif re.search(r"[\\u0600-\\u06FF]", spoken_text):
+            elif re.search(r"[\u0600-\u06FF]", spoken_text):
                 detected_language = "ar"
-            elif re.search(r"[\\u0900-\\u097F]", spoken_text):
+            elif re.search(r"[\u0900-\u097F]", spoken_text):
                 detected_language = "hi"
-            elif re.search(r"[\\u3040-\\u30FF]", spoken_text):
+            elif re.search(r"[\u3040-\u30FF]", spoken_text):
                 detected_language = "ja"
-            elif re.search(r"[\\u4E00-\\u9FFF]", spoken_text):
+            elif re.search(r"[\u4E00-\u9FFF]", spoken_text):
                 detected_language = "zh-cn"
-            elif re.search(r"[\\uAC00-\\uD7AF]", spoken_text):
+            elif re.search(r"[\uAC00-\uD7AF]", spoken_text):
                 detected_language = "ko"
             elif re.search(r"[А-Яа-яЁё]", spoken_text):
                 detected_language = "ru"
