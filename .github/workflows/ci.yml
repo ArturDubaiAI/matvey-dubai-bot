@@ -30,7 +30,8 @@ jobs:
                   "SELECT name FROM sqlite_master WHERE type='table'"
               )}
           required = {"owner_properties", "chat_conversations",
-                      "processed_telegram_updates", "client_leads", "partner_contacts"}
+                      "processed_telegram_updates", "client_leads", "partner_contacts",
+                      "child_agents", "child_processed_updates"}
           missing = required - tables
           assert not missing, f"Missing CRM tables: {sorted(missing)}"
           print("Database schema OK")
