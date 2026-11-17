@@ -48,6 +48,15 @@ class MatveyRuntimeTests(unittest.TestCase):
         self.assertIn("never repeat questions", saved["system_notes"])
         self.assertEqual(saved["status"], "draft_token_required")
 
+    def test_child_training_appends_without_erasing_previous_rules(self):
+        agent = main.register_child_agent("Sales Agent | Dubai sales | auto")
+        key = agent["agent_key"]
+        self.assertTrue(main.update_child_agent_notes(key, "Never invent prices."))
+        self.assertTrue(main.update_child_agent_notes(key, "Always include direct listing URLs."))
+        saved = main.get_child_agent(key)
+        self.assertIn("Never invent prices.", saved["system_notes"])
+        self.assertIn("Always include direct listing URLs.", saved["system_notes"])
+
     def test_child_webhook_update_is_deduplicated_per_agent(self):
         self.assertTrue(main.claim_child_update("agent_a", 1001))
         self.assertFalse(main.claim_child_update("agent_a", 1001))
