@@ -872,15 +872,13 @@ def telegram():
             language_code = (message.get("from", {}).get("language_code") or "").lower()
             if language_code.startswith("en"):
                 answer = (
-                    "Hello! I’m the AI assistant for Arthur’s real estate team in Dubai. "
-                    "I can help you rent, buy, or list property in Dubai. "
+                    "Hello! My name is Matvey. I’m Arthur’s AI assistant for real estate. "
                     "How can I help?"
                 )
             else:
                 answer = (
-                    "Привет! Я ИИ-ассистент команды Артура по недвижимости в Дубае. "
-                    "Могу помочь снять, купить или сдать недвижимость в Дубае. "
-                    "Что вас интересует?"
+                    "Здравствуйте! Меня зовут Матвей. Я AI-помощник Артура по недвижимости. "
+                    "Чем могу вам помочь?"
                 )
             # Persist the greeting so the next message continues this conversation.
             init_property_database()
