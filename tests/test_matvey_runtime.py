@@ -68,6 +68,28 @@ class MatveyRuntimeTests(unittest.TestCase):
         self.assertFalse(main.claim_child_update("agent_a", 1001))
         self.assertTrue(main.claim_child_update("agent_b", 1001))
 
+    def test_group_monitoring_requires_explicit_allow_list(self):
+        old = os.environ.get("TELEGRAM_MONITORED_CHAT_IDS")
+        os.environ["TELEGRAM_MONITORED_CHAT_IDS"] = "-100123,-100456"
+        try:
+            self.assertEqual(main.monitored_group_ids(), {"-100123", "-100456"})
+        finally:
+            if old is None:
+                os.environ.pop("TELEGRAM_MONITORED_CHAT_IDS", None)
+            else:
+                os.environ["TELEGRAM_MONITORED_CHAT_IDS"] = old
+
+    def test_group_message_url_uses_public_username_or_private_group_id(self):
+        public = main.build_group_message_url({"username": "dubai_chat"}, {"message_id": 88})
+        private = main.build_group_message_url({"id": -10012345}, {"message_id": 89})
+        self.assertEqual(public, "https://t.me/dubai_chat/88")
+        self.assertEqual(private, "https://t.me/c/12345/89")
+
+    def test_group_lead_table_exists(self):
+        with __import__("sqlite3").connect(main.MATVEY_DB_PATH) as conn:
+            tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        self.assertIn("group_property_leads", tables)
+
     def test_multilingual_voice_and_dialogue_rules_are_present(self):
         self.assertIn("УНИВЕРСАЛЬНЫЙ ЯЗЫКОВОЙ РЕЖИМ", main.SYSTEM_INSTRUCTIONS)
         self.assertIn("ЕСТЕСТВЕННЫЙ ЧЕЛОВЕЧЕСКИЙ ДИАЛОГ", main.SYSTEM_INSTRUCTIONS)
