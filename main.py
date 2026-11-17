@@ -908,17 +908,26 @@ def telegram():
             answer = "Контекст этого диалога очищен. Начнём заново. Что ищем в Дубае?"
         elif incoming_text.startswith("/start"):
             language_code = (message.get("from", {}).get("language_code") or "").lower()
-            if language_code.startswith("en"):
+            if is_admin:
+                if language_code.startswith("en"):
+                    answer = (
+                        "Welcome back, Artur. I'm Matvey, your AI agent. "
+                        "I'm in administrator mode and ready for your work instructions."
+                    )
+                else:
+                    answer = (
+                        "Артур, привет. Я Матвей, твой AI-агент. "
+                        "Режим руководителя активен. Готов выполнять рабочие поручения."
+                    )
+            elif language_code.startswith("en"):
                 answer = (
-                    "Hello! I'm Matvey, your AI agent and personal guide to Dubai real estate. "
-                    "I can help you understand the market, get oriented on prices, and answer your questions. "
-                    "How can I help?"
+                    "Hello! I'm Matvey, an AI agent for Dubai real estate. "
+                    "I can help with renting, buying, selling and property enquiries."
                 )
             else:
                 answer = (
-                    "Здравствуйте! Я Матвей, AI-агент и ваш персональный гид по недвижимости Дубая. "
-                    "Помогу разобраться в рынке, сориентирую по ценам и отвечу на ваши вопросы. "
-                    "Чем могу вам помочь?"
+                    "Здравствуйте! Я Матвей, AI-агент по недвижимости Дубая. "
+                    "Помогаю с арендой, покупкой, продажей и вопросами по объектам."
                 )
             # Persist the greeting so the next message continues this conversation.
             init_property_database()
