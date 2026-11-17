@@ -220,6 +220,127 @@ def list_child_agents():
             "SELECT agent_key, display_name, specialization, language_policy, token_env_var, status "
             "FROM child_agents ORDER BY id"
         ).fetchall()
+def get_child_agent(agent_key):
+    init_property_database()
+    with sqlite3.connect(MATVEY_DB_PATH, timeout=20) as conn:
+        row = conn.execute(
+            "SELECT agent_key, display_name, specialization, language_policy, system_notes, token_env_var, status "
+            "FROM child_agents WHERE agent_key=?",
+            (agent_key,)
+        ).fetchone()
+    if not row:
+        return None
+    return {
+        "agent_key": row[0], "display_name": row[1], "specialization": row[2],
+        "language_policy": row[3], "system_notes": row[4],
+        "token_env_var": row[5], "status": row[6],
+    }
+
+
+def activate_child_agent(agent_key):
+    """Bind a child profile to its own BotFather token and Telegram webhook."""
+    agent = get_child_agent(agent_key)
+    if not agent:
+        raise ValueError("Профиль агента не найден.")
+    token = os.environ.get(agent["token_env_var"], "").strip()
+    matches = re.findall(
+        r"(?<![A-Za-z0-9_])([0-9]{8,12}:[A-Za-z0-9_-]{30,})(?![A-Za-z0-9_-])",
+        token,
+    )
+    if len(matches) != 1:
+        raise ValueError(
+            f"Не найден корректный токен. Добавь отдельный токен BotFather в защищённую переменную "
+            f"{agent['token_env_var']} в Render, затем повтори /activateagent {agent_key}."
+        )
+    child_token = matches[0]
+    child_api = f"https://api.telegram.org/bot{child_token}"
+    me_response = requests.get(f"{child_api}/getMe", timeout=15)
+    me_response.raise_for_status()
+    me = me_response.json()
+    if not me.get("ok"):
+        raise RuntimeError("Telegram не подтвердил токен дочернего бота.")
+    webhook_url = WEBHOOK_URL.replace("/telegram", f"/child/{agent_key}/telegram")
+    webhook_response = requests.post(
+        f"{child_api}/setWebhook",
+        json={"url": webhook_url},
+        timeout=20,
+    )
+    webhook_response.raise_for_status()
+    if not webhook_response.json().get("ok"):
+        raise RuntimeError("Telegram не подтвердил установку webhook.")
+    with sqlite3.connect(MATVEY_DB_PATH, timeout=20) as conn:
+        conn.execute(
+            "UPDATE child_agents SET status='active', updated_at=? WHERE agent_key=?",
+            (datetime.now(timezone.utc).isoformat(), agent_key)
+        )
+        conn.commit()
+    return {"agent": agent, "bot_username": me.get("result", {}).get("username"), "webhook_url": webhook_url}
+
+
+def child_agent_answer(agent, user_text, chat_id):
+    """Run a specialist child agent with isolated conversation history."""
+    key = f"child:{agent['agent_key']}:{chat_id}"
+    init_property_database()
+    with sqlite3.connect(MATVEY_DB_PATH, timeout=20) as conn:
+        row = conn.execute(
+            "SELECT history_json FROM chat_conversations WHERE chat_id=?", (key,)
+        ).fetchone()
+    try:
+        history = json.loads(row[0] or "[]") if row else []
+    except (TypeError, ValueError):
+        history = []
+    if not isinstance(history, list):
+        history = []
+    conversation_input = history + [{"role": "user", "content": user_text[:12000]}]
+    instructions = (
+        SYSTEM_INSTRUCTIONS
+        + f"\\n\\nТы дочерний AI-агент «{agent['display_name']}». "
+        + f"Твоя специализация: {agent['specialization']}. "
+        + f"Политика языка: {agent['language_policy']}. "
+        + f"Дополнительные правила руководителя: {agent['system_notes']}. "
+        + "Работай только в пределах своей специализации, отвечай на языке последнего сообщения. "
+        + "У тебя нет доступа к административным полномочиям главного Матвея."
+    )
+    response = requests.post(
+        OPENAI_RESPONSES_URL,
+        headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
+        json={
+            "model": "gpt-4.1-mini",
+            "instructions": instructions,
+            "input": conversation_input,
+            "tools": [{"type": "web_search_preview"}],
+            "tool_choice": "auto",
+            "max_output_tokens": 1200,
+        },
+        timeout=60,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    answer = (payload.get("output_text") or "").strip()
+    if not answer:
+        chunks = [
+            part.get("text", "")
+            for item in payload.get("output", [])
+            for part in item.get("content", [])
+            if part.get("type") == "output_text" and part.get("text")
+        ]
+        answer = "\n".join(chunks).strip()
+    if not answer:
+        raise RuntimeError("Дочерний агент не вернул текстовый ответ.")
+    saved = (conversation_input + [{"role": "assistant", "content": answer}])[-MAX_HISTORY_MESSAGES:]
+    with sqlite3.connect(MATVEY_DB_PATH, timeout=20) as conn:
+        conn.execute(
+            """INSERT INTO chat_conversations (chat_id, history_json, updated_at)
+               VALUES (?, ?, ?)
+               ON CONFLICT(chat_id) DO UPDATE SET
+                   history_json=excluded.history_json, updated_at=excluded.updated_at""",
+            (key, json.dumps(saved, ensure_ascii=False), datetime.now(timezone.utc).isoformat())
+        )
+        conn.commit()
+    return answer
+
+
+
 
 
 def claim_telegram_update(update_id):
@@ -697,9 +818,10 @@ def telegram_send(chat_id, text):
             raise RuntimeError("Telegram sendMessage returned ok=false")
 
 
-def telegram_send_audio(chat_id, text):
+def telegram_send_audio(chat_id, text, telegram_api=None):
     """Use only the approved Dmitry neural voice for Russian; never substitute another Russian voice."""
-    if not TELEGRAM_API or not text:
+    api_base = telegram_api or TELEGRAM_API
+    if not api_base or not text:
         return
     spoken_text = re.sub(r"\[([^\]]+)\]\((https?://[^)]+)\)", r"\1", str(text))
     spoken_text = re.sub(r"[*_#]", "", spoken_text).replace(chr(96), "").strip()
@@ -840,7 +962,7 @@ def telegram_send_audio(chat_id, text):
 
         with open(temp_path, "rb") as audio_file:
             response = requests.post(
-                f"{TELEGRAM_API}/sendVoice",
+                f"{api_base}/sendVoice",
                 data={"chat_id": chat_id},
                 files={"voice": ("matvey.mp3", audio_file, "audio/mpeg")},
                 timeout=60,
@@ -1003,15 +1125,17 @@ def localized_start_greeting(language_code, is_admin=False):
     )
 
 
-def telegram_voice_to_text(message):
-    if not TELEGRAM_API:
+def telegram_voice_to_text(message, telegram_api=None, telegram_token=None):
+    api_base = telegram_api or TELEGRAM_API
+    api_token = telegram_token or TELEGRAM_TOKEN
+    if not api_base or not api_token:
         raise RuntimeError("Telegram token is not configured")
     voice = message.get("voice") or message.get("audio")
     if not voice or not voice.get("file_id"):
         return None
 
     file_info_response = requests.get(
-        f"{TELEGRAM_API}/getFile",
+        f"{api_base}/getFile",
         params={"file_id": voice["file_id"]},
         timeout=20,
     )
@@ -1023,7 +1147,7 @@ def telegram_voice_to_text(message):
     if not file_path:
         raise RuntimeError("Telegram did not return a voice file path")
 
-    download_url = f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{file_path}"
+    download_url = f"https://api.telegram.org/file/bot{api_token}/{file_path}"
     audio_response = requests.get(download_url, timeout=40)
     audio_response.raise_for_status()
 
@@ -1247,6 +1371,19 @@ def telegram():
                     )
                 except ValueError as exc:
                     answer = str(exc)
+        elif incoming_text.startswith("/activateagent"):
+            if not is_admin:
+                answer = "Эта команда доступна только руководителю."
+            else:
+                agent_key = incoming_text[len("/activateagent"):].strip().lower()
+                try:
+                    activated = activate_child_agent(agent_key)
+                    answer = (
+                        f"Агент «{activated['agent']['display_name']}» активирован. "
+                        f"Telegram: @{activated['bot_username']}. Webhook установлен и Telegram его подтвердил."
+                    )
+                except (ValueError, requests.RequestException, RuntimeError) as exc:
+                    answer = str(exc)
         elif incoming_text.startswith("/stats"):
             if not is_admin:
                 answer = "Эта команда доступна только руководителю."
@@ -1389,6 +1526,69 @@ def telegram():
             safe_telegram_error("Failed to send error reply", send_exc)
         return "OK", 200
 
+    return "OK", 200
+
+
+@app.route("/child/<agent_key>/telegram", methods=["POST"])
+def child_telegram(agent_key):
+    """Webhook runtime for isolated specialist child bots."""
+    agent = get_child_agent(agent_key)
+    if not agent or agent["status"] != "active":
+        return "Unknown or inactive child agent", 404
+    token = os.environ.get(agent["token_env_var"], "").strip()
+    matches = re.findall(
+        r"(?<![A-Za-z0-9_])([0-9]{8,12}:[A-Za-z0-9_-]{30,})(?![A-Za-z0-9_-])",
+        token,
+    )
+    if len(matches) != 1:
+        return "Child bot token unavailable", 503
+    child_token = matches[0]
+    child_api = f"https://api.telegram.org/bot{child_token}"
+    data = request.get_json(silent=True) or {}
+    message = data.get("message") or data.get("edited_message")
+    if not message:
+        return "OK", 200
+    chat_id = message.get("chat", {}).get("id")
+    if not chat_id:
+        return "OK", 200
+    incoming = (message.get("text") or message.get("caption") or "").strip()
+    try:
+        if message.get("voice") or message.get("audio"):
+            transcript = telegram_voice_to_text(
+                message, telegram_api=child_api, telegram_token=child_token
+            )
+            incoming = transcript or ""
+        if not incoming:
+            answer = "I couldn't understand that message. Please send it again as text or voice."
+        elif not OPENAI_API_KEY:
+            answer = "The AI service is temporarily unavailable."
+        else:
+            answer = child_agent_answer(agent, incoming, chat_id)
+        send_response = requests.post(
+            f"{child_api}/sendMessage",
+            json={"chat_id": chat_id, "text": answer[:3900]},
+            timeout=20,
+        )
+        send_response.raise_for_status()
+        if not send_response.json().get("ok"):
+            raise RuntimeError("Telegram sendMessage returned ok=false")
+        try:
+            telegram_send_audio(chat_id, answer, telegram_api=child_api)
+        except Exception as exc:
+            logging.warning("Child agent voice reply failed: error_type=%s", type(exc).__name__)
+    except Exception as exc:
+        logging.error(
+            "Child agent webhook failed: agent_key=%s error_type=%s",
+            agent_key, type(exc).__name__
+        )
+        try:
+            requests.post(
+                f"{child_api}/sendMessage",
+                json={"chat_id": chat_id, "text": "A technical issue occurred. Please try again shortly."},
+                timeout=15,
+            )
+        except requests.RequestException:
+            pass
     return "OK", 200
 
 
