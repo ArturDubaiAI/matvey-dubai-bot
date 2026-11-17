@@ -313,6 +313,58 @@ def update_child_agent_notes(agent_key, notes):
         return True
 
 
+def create_child_agent_from_instruction(instruction):
+    """Turn a natural-language admin request into a specialist child-agent profile."""
+    if not OPENAI_API_KEY:
+        raise RuntimeError("Для создания профиля нужен настроенный OPENAI_API_KEY.")
+    schema = {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string"},
+            "specialization": {"type": "string"},
+            "language": {"type": "string"},
+            "instructions": {"type": "string"},
+        },
+        "required": ["name", "specialization", "language", "instructions"],
+        "additionalProperties": False,
+    }
+    response = requests.post(
+        OPENAI_RESPONSES_URL,
+        headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
+        json={
+            "model": "gpt-4.1-mini",
+            "instructions": (
+                "Extract exactly one specialist Telegram AI child-agent profile from the administrator's request. "
+                "Preserve the requested specialization and rules. If no name is specified, create a concise useful name. "
+                "If language is unspecified, use 'auto' so the agent replies in the user's language. "
+                "Do not invent or include any BotFather token or secret."
+            ),
+            "input": instruction[:5000],
+            "text": {"format": {"type": "json_schema", "name": "child_agent_profile", "strict": True, "schema": schema}},
+            "max_output_tokens": 500,
+        },
+        timeout=30,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    raw = payload.get("output_text") or ""
+    if not raw:
+        for item in payload.get("output", []):
+            for part in item.get("content", []):
+                if part.get("type") == "output_text":
+                    raw += part.get("text", "")
+    spec = json.loads(raw)
+    name = (spec.get("name") or "").strip()
+    specialization = (spec.get("specialization") or "").strip()
+    language = (spec.get("language") or "auto").strip()
+    notes = (spec.get("instructions") or "").strip()
+    if not name or not specialization:
+        raise ValueError("Не удалось определить название и специализацию дочернего агента.")
+    return register_child_agent(" | ".join(
+        part.replace("|", "/") for part in (name, specialization, language, notes)
+    ))
+
+
 def list_child_agents():
     init_property_database()
     with sqlite3.connect(MATVEY_DB_PATH, timeout=20) as conn:
@@ -1444,6 +1496,18 @@ def telegram():
                     "Режим руководителя не активен для этого Telegram-аккаунта. "
                     "ID не найден в настройке ADMIN_TELEGRAM_IDS."
                 )
+        elif is_admin and re.search(r"(создай|создать|создайте|create|build|make).{0,100}(бот|агент|bot|agent)", incoming_text, re.I):
+            try:
+                agent = create_child_agent_from_instruction(incoming_text)
+                answer = (
+                    f"Создал профиль дочернего агента «{agent['display_name']}». "
+                    f"Специализация: {agent['specialization']}. "
+                    f"Ключ: {agent['agent_key']}. "
+                    f"Для запуска нужен отдельный токен BotFather в защищённой переменной "
+                    f"{agent['token_env_var']}; после добавления токена выполни /activateagent {agent['agent_key']}."
+                )
+            except (ValueError, RuntimeError, requests.RequestException, json.JSONDecodeError) as exc:
+                answer = f"Не удалось создать профиль агента: {str(exc)[:300]}"
         elif incoming_text.startswith("/agents"):
             if not is_admin:
                 answer = "Эта команда доступна только руководителю."
