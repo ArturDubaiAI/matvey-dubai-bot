@@ -2,4 +2,4 @@ flask
 requests
 python-telegram-bot
 edge-tts
-
+langdetect==1.0.9
