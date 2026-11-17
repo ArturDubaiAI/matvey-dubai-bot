@@ -42,3 +42,32 @@ This file is the repository's working source of truth for product behavior. A re
 - The long-term architecture may support many specialist child agents under a central Matvey controller, each with isolated configuration, history, permissions and CRM scope.
 - Do not claim that child agents exist until provisioning, credentials, isolation, deployment and tests are implemented.
 - Each additional Telegram bot requires its own BotFather token. WhatsApp requires a separate approved WhatsApp Business integration.
+
+
+## Multilingual text and voice
+- Detect the language of every incoming text message and answer in that same language, without limiting the language list to Russian and English.
+- Voice notes and audio are transcribed automatically in the original language; do not translate unless asked.
+- Store the transcript in the same chat history and CRM intake path as typed messages.
+- Generate a voice reply in the detected output language where the TTS provider supports it; always preserve the text reply if voice synthesis fails.
+- Language detection and speech synthesis are best-effort across providers; do not promise perfect support for every language or accent.
+
+## Child-agent lifecycle
+- `/createagent Name | Specialization | Language | Extra instructions` creates a separate specialist profile.
+- `/trainagent agent_key | Additional instructions` updates its specialist rules.
+- `/agents` lists profiles and their state.
+- Every child bot uses its own BotFather token in a protected Render environment variable named by the profile, for example `TELEGRAM_TOKEN_LEASING_SPECIALIST`.
+- `/activateagent agent_key` validates that token with Telegram, sets a dedicated webhook route, and only then marks the profile active.
+- Child bots have isolated conversation-history keys and per-agent webhook update deduplication.
+- A profile in `draft_token_required` is not a running Telegram bot. Never represent it as activated until Telegram confirms webhook setup.
+
+## Administrator commands
+- `/myid`: display the sender's Telegram numeric ID.
+- `/adminstatus`: report whether the current Telegram ID is in `ADMIN_TELEGRAM_IDS`.
+- `/stats`: show counts of saved objects, client leads and partners.
+- `/exportdb`: send a ZIP archive containing CSV exports of the CRM tables.
+- `/agents`, `/createagent`, `/trainagent`, `/activateagent`: manage child-agent profiles and activation.
+- These commands require the sender ID to be configured as an administrator. Never infer administrator status from a name or username.
+
+## Search link guard
+- The response layer removes generic Bayut, Property Finder and Dubizzle links that do not look like individual listing URLs.
+- This is a format guard, not proof that an ad is live or owner-direct. The agent must still verify the individual page and its current contents before describing it as confirmed.
