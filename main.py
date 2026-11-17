@@ -228,8 +228,8 @@ def remove_generic_portal_urls(answer):
         if not known_portal:
             return False
         has_listing_marker = bool(
-            re.search(r"details?|listing|/\d{5,}(?:[./-]|$)", path)
-            or re.search(r"(?:^|/)\d{5,}(?:/|$)", path)
+            re.search(r"details?[-_/]?\d{5,}", path)
+            or re.search(r"(?:^|[-_/])\d{6,}(?:[./-]|$)", path)
         )
         return not has_listing_marker
 
