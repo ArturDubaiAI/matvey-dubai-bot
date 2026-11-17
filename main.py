@@ -14,7 +14,8 @@ import threading
 import time
 import requests
 import edge_tts
-from langdetect import detect, LangDetectException
+from langdetect import detect
+from langdetect.lang_detect_exception import LangDetectException
 from flask import Flask, request, jsonify
 
 app = Flask(__name__)
