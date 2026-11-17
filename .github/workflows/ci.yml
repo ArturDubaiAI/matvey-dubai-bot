@@ -31,7 +31,7 @@ jobs:
               )}
           required = {"owner_properties", "chat_conversations",
                       "processed_telegram_updates", "client_leads", "partner_contacts",
-                      "child_agents", "child_processed_updates"}
+                      "child_agents", "child_processed_updates", "group_property_leads"}
           missing = required - tables
           assert not missing, f"Missing CRM tables: {sorted(missing)}"
           print("Database schema OK")
