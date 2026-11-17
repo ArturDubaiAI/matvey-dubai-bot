@@ -71,3 +71,13 @@ This file is the repository's working source of truth for product behavior. A re
 ## Search link guard
 - The response layer removes generic Bayut, Property Finder and Dubizzle links that do not look like individual listing URLs.
 - This is a format guard, not proof that an ad is live or owner-direct. The agent must still verify the individual page and its current contents before describing it as confirmed.
+
+
+## Telegram community monitoring
+- Monitor only groups explicitly listed in `TELEGRAM_MONITORED_CHAT_IDS`; never assume access from a public invite link.
+- Bot must be added by a group administrator/member with permission. Telegram privacy mode must permit the intended message visibility; disabling privacy or admin status may be required.
+- Process new group messages silently; do not reply, mention members, or initiate unsolicited contact in groups.
+- Classify potential owner listings separately from tenant/buyer requests and agents. Owner-direct status must be evidence-based; store source group/message, direct message URL when available, sender's public Telegram identity, confidence and exact source text.
+- Deduplicate by source chat and message ID. Only send WhatsApp notifications when Cloud API credentials and the owner's destination number are configured; record whether notification succeeded.
+- Never access private chats or historical group content without explicit access. Respect group rules, platform limits and user privacy.
+- WhatsApp Cloud API requires a valid business integration and may require approved templates outside the customer-service window. Missing credentials mean leads remain stored but are not forwarded.
