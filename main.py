@@ -357,6 +357,128 @@ def save_owner_property_message(message, user_text, chat_id, sender_id):
         logging.error("Owner property intake storage failed: error_type=%s", type(exc).__name__)
 
 
+def save_crm_contact(user_text, chat_id, sender_id):
+    """Store explicitly relevant inbound client or agent enquiries; never initiate outreach."""
+    if not OPENAI_API_KEY or not chat_id or not user_text:
+        return
+    text_lower = user_text.lower()
+    relevant = re.search(
+        r"аренд|сним|сда|куп|покуп|прод|недвиж|квартир|студи|вилл|"
+        r"агент|риелтор|риэлтор|сотруднич|партн|property|rent|lease|buy|"
+        r"purchase|sell|sale|real estate|realtor|broker|agent|collaborat",
+        text_lower,
+    )
+    if not relevant:
+        return
+    schema = {
+        "type": "object",
+        "properties": {
+            "record_type": {"type": "string", "enum": ["client", "partner", "none"]},
+            "language": {"type": ["string", "null"]},
+            "intent": {"type": ["string", "null"]},
+            "name": {"type": ["string", "null"]},
+            "agency": {"type": ["string", "null"]},
+            "city_region": {"type": ["string", "null"]},
+            "specialization": {"type": ["string", "null"]},
+            "phone": {"type": ["string", "null"]},
+            "telegram_username": {"type": ["string", "null"]},
+            "consent_status": {"type": "string", "enum": ["yes", "no", "unknown"]},
+            "requirements_summary": {"type": ["string", "null"]}
+        },
+        "required": ["record_type", "language", "intent", "name", "agency", "city_region",
+                     "specialization", "phone", "telegram_username", "consent_status",
+                     "requirements_summary"],
+        "additionalProperties": False
+    }
+    try:
+        response = requests.post(
+            OPENAI_RESPONSES_URL,
+            headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
+            json={
+                "model": "gpt-4.1-mini",
+                "instructions": (
+                    "Classify this inbound Telegram message for a Dubai real-estate company. "
+                    "Extract only facts explicitly supplied by the sender. record_type=partner only "
+                    "when the sender identifies as a real-estate agent/broker or explicitly proposes "
+                    "professional cooperation; client for a genuine rental/buy/sell enquiry; otherwise none. "
+                    "Never infer missing contact data. consent_status=yes only for explicit permission "
+                    "to receive future marketing/property updates; no for explicit refusal; otherwise unknown. "
+                    "requirements_summary must be concise and factual. Return only schema JSON."
+                ),
+                "input": user_text[:5000],
+                "text": {"format": {"type": "json_schema", "name": "matvey_crm_intake", "strict": True, "schema": schema}},
+                "max_output_tokens": 400,
+            },
+            timeout=25,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        raw = payload.get("output_text") or ""
+        if not raw:
+            for item in payload.get("output", []):
+                for part in item.get("content", []):
+                    if part.get("type") == "output_text":
+                        raw += part.get("text", "")
+        record = json.loads(raw)
+        kind = record.get("record_type")
+        if kind not in ("client", "partner"):
+            return
+        now = datetime.now(timezone.utc).isoformat()
+        init_property_database()
+        with sqlite3.connect(MATVEY_DB_PATH, timeout=20) as conn:
+            if kind == "partner":
+                conn.execute("""
+                    INSERT INTO partner_contacts (
+                        chat_id, telegram_user_id, name, agency, city_region, specialization,
+                        language, contact_phone, telegram_username, outreach_consent,
+                        status, last_contact_at, notes, created_at, updated_at
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    ON CONFLICT(chat_id) DO UPDATE SET
+                        telegram_user_id=excluded.telegram_user_id,
+                        name=COALESCE(excluded.name,name),
+                        agency=COALESCE(excluded.agency,agency),
+                        city_region=COALESCE(excluded.city_region,city_region),
+                        specialization=COALESCE(excluded.specialization,specialization),
+                        language=COALESCE(excluded.language,language),
+                        contact_phone=COALESCE(excluded.contact_phone,contact_phone),
+                        telegram_username=COALESCE(excluded.telegram_username,telegram_username),
+                        outreach_consent=CASE WHEN excluded.outreach_consent IN ('yes','no') THEN excluded.outreach_consent ELSE outreach_consent END,
+                        last_contact_at=excluded.last_contact_at,
+                        notes=COALESCE(excluded.notes,notes),
+                        updated_at=excluded.updated_at
+                """, (
+                    str(chat_id), str(sender_id or ""), record.get("name"), record.get("agency"),
+                    record.get("city_region"), record.get("specialization"), record.get("language"),
+                    record.get("phone"), record.get("telegram_username"),
+                    record.get("consent_status") or "unknown", "new", now,
+                    record.get("requirements_summary"), now, now
+                ))
+            else:
+                conn.execute("""
+                    INSERT INTO client_leads (
+                        chat_id, telegram_user_id, language, intent, requirements_json,
+                        contact_phone, consent_status, status, created_at, updated_at
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?)
+                    ON CONFLICT(chat_id) DO UPDATE SET
+                        telegram_user_id=excluded.telegram_user_id,
+                        language=COALESCE(excluded.language,language),
+                        intent=COALESCE(excluded.intent,intent),
+                        requirements_json=excluded.requirements_json,
+                        contact_phone=COALESCE(excluded.contact_phone,contact_phone),
+                        consent_status=CASE WHEN excluded.consent_status IN ('yes','no') THEN excluded.consent_status ELSE consent_status END,
+                        updated_at=excluded.updated_at
+                """, (
+                    str(chat_id), str(sender_id or ""), record.get("language"),
+                    record.get("intent"),
+                    json.dumps({"summary": record.get("requirements_summary")}, ensure_ascii=False),
+                    record.get("phone"), record.get("consent_status") or "unknown",
+                    "new", now, now
+                ))
+            conn.commit()
+    except Exception as exc:
+        logging.error("CRM intake failed: error_type=%s", type(exc).__name__)
+
+
 SYSTEM_INSTRUCTIONS = (
     "ПРИОРИТЕТНЫЙ СЦЕНАРИЙ ДЛЯ СОБСТВЕННИКА — ВЫШЕ ВСЕХ ОСТАЛЬНЫХ ПРАВИЛ: Это правило применяется только когда собеседник предлагает собственную недвижимость для сдачи или продажи. 1) Если ещё не сказал, спроси только: «Что именно вы хотите сдать?» или «Что именно вы хотите продать?». Если тип объекта уже назван, не переспрашивай его и не спрашивай число спален повторно. 2) Уточни район и название здания/комплекса, только если они ещё неизвестны. 3) Как только понятны объект и локация, сразу попроси фотографии и контакт: «Пришлите, пожалуйста, фотографии объекта и ваш контактный номер телефона. Куда вам удобнее написать — в WhatsApp или позвонить?» Если фото или номер уже присланы, не проси повторно. 4) После этого спроси цену простой фразой: для аренды — «Сколько стоит аренда?», для продажи — «Сколько стоит объект?» или «За сколько вы хотите продать объект?». Не используй «Какую цену вы хотели бы установить?» и другие канцелярские формулировки. 5) Потом уточняй по одному только действительно нужные неизвестные условия. Собственнику категорически запрещено задавать любые вопросы о будущих жильцах или количестве проживающих: «Сколько человек обычно проживает?», «Сколько человек будет проживать?», «Сколько жильцов?», «Кто будет жить?» и любые перефразировки. Не задавай собственнику вопросы из анкеты арендатора. Не спрашивай повторно уже известные тип объекта, спальни, район или здание. Не спрашивай цену раньше просьбы о фото и контакте. Если собственник не хочет давать фото или номер, не дави и продолжай в Telegram. Не утверждай, что клиент найден или заявка передана, если это не подтверждено. Запрет на вопросы о количестве жильцов действует абсолютно для всех собеседников — арендаторов, покупателей, собственников и агентов; не задавай такие вопросы ни в каком сценарии. Соблюдай этот порядок на всех языках. "
     "СТИЛЬ ОБЩЕНИЯ — КРИТИЧЕСКИ ВАЖНО: Всегда отвечай максимально коротко и по делу. Обычно 1–3 коротких предложения, ориентир до 40 слов; если достаточно — ответь одной фразой. Задавай только один короткий вопрос за раз. Не пиши длинные вступления, повторения, лекции, списки на много пунктов, канцелярит, стихи, рифмы, пафос и лишние объяснения. Не пересказывай клиенту всю его заявку. Давай только нужную информацию и следующий шаг. Если пользователь просит подробности — тогда раскрой тему ровно настолько, насколько нужно. Голосовые ответы делай такими же короткими: озвучивай только краткий ответ, без длинных пояснений и повторов; обычно до 10–15 секунд. Не растягивай голосовое ради заполнения времени. Сохраняй точность и важные условия даже при краткости. Это правило действует на русском и английском языках и для всех типов собеседников. " 
@@ -1060,6 +1182,12 @@ def telegram():
                 save_owner_property_message(message, incoming_text, chat_id, sender_id)
             except Exception as exc:
                 logging.exception("Owner intake failed; text reply was already sent: error_type=%s", type(exc).__name__)
+
+        if not is_admin and incoming_text:
+            try:
+                save_crm_contact(incoming_text, chat_id, sender_id)
+            except Exception as exc:
+                logging.exception("CRM intake failed; text reply was already sent: error_type=%s", type(exc).__name__)
 
         try:
             # Send the approved voice note about one second after the text reply.
