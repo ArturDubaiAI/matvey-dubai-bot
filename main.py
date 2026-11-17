@@ -1484,7 +1484,7 @@ def telegram():
         if (message.get("voice") or message.get("audio")) and OPENAI_API_KEY:
             voice_transcript = telegram_voice_to_text(message)
             if voice_transcript:
-                conversation_text = "\\n".join(
+                conversation_text = "\n".join(
                     part for part in (incoming_text, voice_transcript) if part
                 )
                 incoming_text = conversation_text
