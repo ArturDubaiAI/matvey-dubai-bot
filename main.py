@@ -1496,7 +1496,7 @@ def telegram():
                     "Режим руководителя не активен для этого Telegram-аккаунта. "
                     "ID не найден в настройке ADMIN_TELEGRAM_IDS."
                 )
-        elif is_admin and re.search(r"(создай|создать|создайте|create|build|make).{0,100}(бот|агент|bot|agent)", incoming_text, re.I):
+        elif is_admin and not incoming_text.startswith("/createagent") and re.search(r"(создай|создать|создайте|create|build|make).{0,100}(бот|агент|bot|agent)", incoming_text, re.I):
             try:
                 agent = create_child_agent_from_instruction(incoming_text)
                 answer = (
