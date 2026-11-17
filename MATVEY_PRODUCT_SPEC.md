@@ -52,7 +52,7 @@ This file is the repository's working source of truth for product behavior. A re
 - Language detection and speech synthesis are best-effort across providers; do not promise perfect support for every language or accent.
 
 ## Child-agent lifecycle
-- `/createagent Name | Specialization | Language | Extra instructions` creates a separate specialist profile.
+- `/createagent Name | Specialization | Language | Extra instructions` creates a separate specialist profile; the administrator may also request creation in natural language. Up to 50 profiles are supported.
 - `/trainagent agent_key | Additional instructions` updates its specialist rules.
 - `/agents` lists profiles and their state.
 - Every child bot uses its own BotFather token in a protected Render environment variable named by the profile, for example `TELEGRAM_TOKEN_LEASING_SPECIALIST`.
