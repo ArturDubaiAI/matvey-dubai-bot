@@ -357,7 +357,7 @@ def create_child_agent_from_instruction(instruction):
         OPENAI_RESPONSES_URL,
         headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
         json={
-            "model": "gpt-4.1-mini",
+            "model": os.environ.get("MATVEY_MODEL", "gpt-4.1-mini"),
             "instructions": (
                 "Extract exactly one specialist Telegram AI child-agent profile from the administrator's request. "
                 "Preserve the requested specialization and rules. If no name is specified, create a concise useful name. "
@@ -483,7 +483,7 @@ def child_agent_answer(agent, user_text, chat_id):
         OPENAI_RESPONSES_URL,
         headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
         json={
-            "model": "gpt-4.1-mini",
+            "model": os.environ.get("MATVEY_MODEL", "gpt-4.1-mini"),
             "instructions": instructions,
             "input": conversation_input,
             "tools": [{"type": "web_search_preview"}],
@@ -651,7 +651,7 @@ def save_owner_property_message(message, user_text, chat_id, sender_id):
             OPENAI_RESPONSES_URL,
             headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
             json={
-                "model": "gpt-4.1-mini",
+                "model": os.environ.get("MATVEY_MODEL", "gpt-4.1-mini"),
                 "instructions": extraction_prompt,
                 "input": (user_text or "")[:6000],
                 "text": {"format": {"type": "json_schema", "name": "owner_property_intake", "strict": True, "schema": schema}},
@@ -757,7 +757,7 @@ def save_crm_contact(user_text, chat_id, sender_id):
             OPENAI_RESPONSES_URL,
             headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
             json={
-                "model": "gpt-4.1-mini",
+                "model": os.environ.get("MATVEY_MODEL", "gpt-4.1-mini"),
                 "instructions": (
                     "Classify this inbound Telegram message for a Dubai real-estate company. "
                     "Extract only facts explicitly supplied by the sender. record_type=partner only "
@@ -1230,7 +1230,7 @@ def openai_answer(user_text, chat_id=None, is_admin=False):
                 "Content-Type": "application/json",
             },
             json={
-                "model": "gpt-4.1-mini",
+                "model": os.environ.get("MATVEY_MODEL", "gpt-4.1-mini"),
                 "instructions": SYSTEM_INSTRUCTIONS + (
                     "\n\nРЕЖИМ РУКОВОДИТЕЛЯ АКТИВЕН: собеседник прошёл проверку Telegram user ID. Отвечай Артуру как руководителю компании: давай внутренние рабочие сводки и выполняй поиск объектов по поручению. Не применяй запрет на внутренние контакты к Артуру, если данные законно доступны и источник указан. Не заявляй о неподключённых источниках.\n"
                     if is_admin else "\n\nКЛИЕНТСКИЙ РЕЖИМ: не раскрывай непубличные внутренние базы, личные номера и закрытые данные. Но помогай искать публичные объявления и предоставляй опубликованные в них контакты собственников/агентов и прямые ссылки, если они реально доступны. Не отказывай автоматически в запросе контактов; если публичного контакта нет, честно объясни это и дай ссылку на источник.\n"
@@ -1295,7 +1295,7 @@ def localized_start_greeting(language_code, is_admin=False):
             OPENAI_RESPONSES_URL,
             headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
             json={
-                "model": "gpt-4.1-mini",
+                "model": os.environ.get("MATVEY_MODEL", "gpt-4.1-mini"),
                 "instructions": (
                     f"{role} Reply only in the language matching this locale code: {language_code}. "
                     "Use natural native phrasing and one or two short sentences. Never add a follow-up questionnaire."
