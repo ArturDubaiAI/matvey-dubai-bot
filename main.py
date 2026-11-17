@@ -186,7 +186,7 @@ def init_property_database():
 
 def register_child_agent(raw_spec):
     """Create a child-agent profile; BotFather secrets are never generated or stored here."""
-    parts = [part.strip() for part in re.split(r"\\s*[|;]\\s*", raw_spec, maxsplit=2)]
+    parts = [part.strip() for part in re.split(r"\s*[|;]\s*", raw_spec, maxsplit=2)]
     if len(parts) < 2 or not parts[0] or not parts[1]:
         raise ValueError("Формат: /createagent Название | Специализация | Язык")
     display_name, specialization = parts[0], parts[1]
@@ -711,7 +711,7 @@ def telegram_send_audio(chat_id, text):
             temp_path = audio_file.name
 
         generated = False
-        is_armenian = bool(re.search(r"[\\u0530-\\u058F]", spoken_text))
+        is_armenian = bool(re.search(r"[\u0530-\u058F]", spoken_text))
         has_cyrillic = bool(re.search(r"[А-Яа-яЁёІіЇїЄєЎў]", spoken_text))
         # Keep the approved Russian voice for Cyrillic; multilingual OpenAI TTS handles other scripts.
         is_russian = has_cyrillic and not is_armenian
@@ -1173,7 +1173,7 @@ def telegram():
                 if not agents:
                     answer = "Дочерних агентов пока нет. Создай профиль командой: /createagent Название | Специализация | Язык"
                 else:
-                    answer = "Дочерние агенты:\\n" + "\\n".join(
+                    answer = "Дочерние агенты:\n" + "\n".join(
                         f"• {row[1]} ({row[0]}) — {row[2]}; язык: {row[3]}; статус: {row[5]}; токен: {row[4]}"
                         for row in agents
                     )
@@ -1185,9 +1185,9 @@ def telegram():
                 try:
                     agent = register_child_agent(raw_spec)
                     answer = (
-                        f"Профиль агента «{agent['display_name']}» создан.\\n"
-                        f"Ключ: {agent['agent_key']}\\nСпециализация: {agent['specialization']}\\n"
-                        f"Язык: {agent['language_policy']}\\n"
+                        f"Профиль агента «{agent['display_name']}» создан.\n"
+                        f"Ключ: {agent['agent_key']}\nСпециализация: {agent['specialization']}\n"
+                        f"Язык: {agent['language_policy']}\n"
                         f"Статус: черновик — требуется отдельный токен BotFather в защищённой переменной "
                         f"{agent['token_env_var']}, затем настройка webhook и проверка запуска."
                     )
