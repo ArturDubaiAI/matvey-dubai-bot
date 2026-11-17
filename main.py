@@ -446,7 +446,8 @@ def child_agent_answer(agent, user_text, chat_id):
     conversation_input = history + [{"role": "user", "content": user_text[:12000]}]
     instructions = (
         SYSTEM_INSTRUCTIONS
-        + f"\n\nТы дочерний AI-агент «{agent['display_name']}». "
+        + f"\n\nВАЖНО: ты отдельный дочерний AI-агент «{agent['display_name']}», а не главный Матвей. "
+        + f"Представляйся именем «{agent['display_name']}» и никогда не называй себя главным Матвеем. "
         + f"Твоя специализация: {agent['specialization']}. "
         + f"Политика языка: {agent['language_policy']}. "
         + f"Дополнительные правила руководителя: {agent['system_notes']}. "
