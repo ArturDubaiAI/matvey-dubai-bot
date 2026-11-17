@@ -36,3 +36,13 @@ Run:
 python -m py_compile main.py
 python -m unittest discover -s tests -v
 ```
+
+
+## Telegram group lead monitoring (new)
+- Add Matvey to each permitted Telegram group. Group message visibility requires Telegram BotFather privacy mode to be disabled for the bot, or the bot to be made an administrator where appropriate; group administrators must authorize the addition.
+- Configure `TELEGRAM_MONITORED_CHAT_IDS` as a comma-separated allow-list of numeric group chat IDs. The bot silently ignores all groups not on this list and never replies into monitored community groups.
+- Group messages are screened for real-estate intent, then GPT classifies owner/renter/buyer/agent signals. Only qualifying, deduplicated messages are stored in `group_property_leads`.
+- Source message links are saved where Telegram exposes a public group username or a private supergroup message path.
+- Optional WhatsApp Cloud API owner alerts require protected environment variables: `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_ACCESS_TOKEN`, and `WHATSAPP_OWNER_NUMBER`. Optional `WHATSAPP_GRAPH_API_VERSION` defaults to `v21.0`.
+- WhatsApp credentials and group IDs are not created automatically. Add them securely in the hosting environment. Respect group rules, user privacy and Telegram anti-spam requirements.
+- This integration does not join groups by link, bypass private-group access, or scrape historical messages. It processes new messages delivered to the configured bot webhook after the bot has been added and authorized.
