@@ -995,7 +995,22 @@ def telegram_send_audio(chat_id, text, telegram_api=None):
         try:
             detected_language = detect(spoken_text[:1200]).lower()
         except LangDetectException:
-            detected_language = "ru" if re.search(r"[А-Яа-яЁё]", spoken_text) else "en"
+            if is_armenian:
+                detected_language = "hy"
+            elif re.search(r"[\\u0600-\\u06FF]", spoken_text):
+                detected_language = "ar"
+            elif re.search(r"[\\u0900-\\u097F]", spoken_text):
+                detected_language = "hi"
+            elif re.search(r"[\\u3040-\\u30FF]", spoken_text):
+                detected_language = "ja"
+            elif re.search(r"[\\u4E00-\\u9FFF]", spoken_text):
+                detected_language = "zh-cn"
+            elif re.search(r"[\\uAC00-\\uD7AF]", spoken_text):
+                detected_language = "ko"
+            elif re.search(r"[А-Яа-яЁё]", spoken_text):
+                detected_language = "ru"
+            else:
+                detected_language = "en"
         # Keep the approved Russian voice only for Russian; other Cyrillic languages use multilingual TTS.
         is_russian = detected_language == "ru" and not is_armenian
         is_english = detected_language == "en"
@@ -1092,7 +1107,7 @@ def telegram_send_audio(chat_id, text, telegram_api=None):
                 "ur": "ur-PK-AsadNeural", "fr": "fr-FR-HenriNeural",
                 "de": "de-DE-ConradNeural", "es": "es-ES-AlvaroNeural",
                 "zh-cn": "zh-CN-YunxiNeural", "ja": "ja-JP-KeitaNeural",
-                "tr": "tr-TR-AhmetNeural", "it": "it-IT-DiegoNeural",
+                "tr": "tr-TR-AhmetNeural", "it": "it-IT-DiegoNeural", "ko": "ko-KR-InJoonNeural",
                 "pt": "pt-BR-AntonioNeural", "uk": "uk-UA-OstapNeural",
             }
             fallback_voice = edge_voice_by_language.get(detected_language)
