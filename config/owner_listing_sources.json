@@ -1,0 +1,122 @@
+{
+  "schema_version": 1,
+  "purpose": "Dubai owner-direct property listing discovery sources",
+  "total_sources": 10,
+  "sources": [
+    {
+      "name": "OwnersDirect",
+      "url": "https://www.ownersdirect.ae/",
+      "deals": [
+        "sale",
+        "rent"
+      ],
+      "owner_submission": "owner_direct_platform",
+      "priority": 1,
+      "verification": "submission route and live listing availability must be checked"
+    },
+    {
+      "name": "DubaiDirect",
+      "url": "https://www.dubaidirect.ae/",
+      "deals": [
+        "rent"
+      ],
+      "owner_submission": "owner_direct_platform",
+      "priority": 1,
+      "verification": "submission route and live listing availability must be checked"
+    },
+    {
+      "name": "DirectSB",
+      "url": "https://www.directsb.com/",
+      "deals": [
+        "sale",
+        "rent"
+      ],
+      "owner_submission": "owner_direct_platform",
+      "priority": 1,
+      "verification": "submission route and live listing availability must be checked"
+    },
+    {
+      "name": "DirectHomes",
+      "url": "https://www.directhomes.ae/app/?lang=en-US",
+      "deals": [
+        "sale",
+        "rent"
+      ],
+      "owner_submission": "owner_direct_platform",
+      "priority": 1,
+      "verification": "owner verification and listing access must be checked"
+    },
+    {
+      "name": "PropDirect",
+      "url": "https://www.propdirect.ae/list",
+      "deals": [
+        "sale",
+        "rent"
+      ],
+      "owner_submission": "owner_submission_form",
+      "priority": 1,
+      "verification": "advertising permit may be required"
+    },
+    {
+      "name": "Noor Ishraq",
+      "url": "https://www.noorishraquae.com/post-property/",
+      "deals": [
+        "sale",
+        "rent"
+      ],
+      "owner_submission": "owner_submission_form",
+      "priority": 1,
+      "verification": "individual owner option; publication process must be checked"
+    },
+    {
+      "name": "Dubizzle",
+      "url": "https://dubai.dubizzle.com/",
+      "deals": [
+        "sale",
+        "rent"
+      ],
+      "owner_submission": "landlord_or_owner_account_subject_to_platform_rules",
+      "priority": 1,
+      "verification": "owner account eligibility and property posting rules must be checked"
+    },
+    {
+      "name": "Akakus",
+      "url": "https://akakus.ae/en/list-your-property",
+      "deals": [
+        "sale",
+        "rent"
+      ],
+      "owner_submission": "agency_review_submission",
+      "priority": 2,
+      "verification": "submission is reviewed; not assumed to publish automatically"
+    },
+    {
+      "name": "Distress",
+      "url": "https://distress.ae/",
+      "deals": [
+        "sale"
+      ],
+      "owner_submission": "owner_submission_subject_to_platform_rules",
+      "priority": 2,
+      "verification": "rentals may be limited to licensed agents"
+    },
+    {
+      "name": "Sakani",
+      "url": "https://www.sakani.io/",
+      "deals": [
+        "sale"
+      ],
+      "owner_submission": "early_access_or_platform_onboarding",
+      "priority": 2,
+      "verification": "availability and owner onboarding must be checked"
+    }
+  ],
+  "operating_rules": [
+    "Search for individual property listing pages, never count a portal homepage as a result.",
+    "Prefer owner-submitted listings, but label an owner as verified only when the source provides evidence.",
+    "For every result retain the exact listing URL, source, deal type, location, property type, asking price, publication/update date when available, and owner/agent evidence.",
+    "Deduplicate the same property across sources.",
+    "Respect each site's terms, robots/access controls, rate limits, and applicable UAE advertising permit requirements.",
+    "If a source cannot be searched automatically or has no accessible individual listings, mark it unavailable/manual-check instead of fabricating results."
+  ]
+}
