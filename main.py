@@ -294,12 +294,23 @@ def register_child_agent(raw_spec):
 def update_child_agent_notes(agent_key, notes):
     init_property_database()
     with sqlite3.connect(MATVEY_DB_PATH, timeout=20) as conn:
-        cursor = conn.execute(
+        row = conn.execute(
+            "SELECT system_notes FROM child_agents WHERE agent_key=?", (agent_key,)
+        ).fetchone()
+        if not row:
+            return False
+        existing = (row[0] or "").strip()
+        addition = (notes or "").strip()
+        if addition and addition not in existing:
+            combined = (existing + "\\n" + addition).strip() if existing else addition
+        else:
+            combined = existing
+        conn.execute(
             "UPDATE child_agents SET system_notes=?, updated_at=? WHERE agent_key=?",
-            (notes[:3000], datetime.now(timezone.utc).isoformat(), agent_key)
+            (combined[-3000:], datetime.now(timezone.utc).isoformat(), agent_key)
         )
         conn.commit()
-        return cursor.rowcount == 1
+        return True
 
 
 def list_child_agents():
