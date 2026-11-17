@@ -83,3 +83,74 @@ A feature is complete only after code is committed, deployment is confirmed, req
 - Delivery order in Telegram: send the text response first, then send the corresponding voice message after approximately one second.
 - This approved voice preference and concise style must carry over to WhatsApp when the official customer-facing WhatsApp integration is implemented, subject to channel audio-message support and successful delivery testing.
 - Status: short-response rules and Russian voice settings are already present in `main.py`; the one-second text-to-audio delay is added in this update. End-to-end delivery still requires live Telegram testing. WhatsApp voice delivery remains planned and unverified.
+
+## 12. Telegram community lead discovery — required
+
+Arthur supplied these Telegram sources for monitoring and lead discovery (deduplicate repeated entries):
+- @DubaistUAE
+- https://t.me/desingerdubai
+- @tmcerberus
+- @dubaiarenda
+- @chats_ads_by_alex
+- @Good_Consultant
+- https://t.me/blackgroup_chat
+
+Matvey must identify BOTH sides of the market in authorized, accessible groups:
+1. Tenant/renter requests: "сниму квартиру/дом/виллу/студию/комнату", bedroom counts (including 1BR/2BR), long/short term, budget and move-in date.
+2. Buyer requests: buy apartment/villa/commercial property, investment enquiries and stated budgets.
+3. Owner/landlord/seller listings: direct-owner rent/sale, owner contacts and property details.
+4. Agent/partner posts must be classified separately and never mislabeled as owner-direct.
+
+For every qualifying post, store: source chat title and ID, direct message URL when available, message ID and timestamp, sender's public name and username, language, lead type, owner status only when explicitly evidenced, property type/bedrooms, area, budget/currency, timing, summary, publicly posted contact details, confidence, and raw source text for audit. Mark missing fields "not specified". Deduplicate by source chat + message ID and avoid repeated alerts. Do not infer private contact data or scrape hidden member lists. Do not automatically DM posters; outreach requires Arthur's configured policy and applicable consent/platform rules. Monitoring must be silent in community chats.
+
+Operational access requirements:
+- A Telegram username or invite URL is a source reference, NOT proof that the bot can read it.
+- Resolve each source to its actual chat/channel and numeric chat ID only after the bot/account has joined and access is verified.
+- Telegram Bot API group reading requires the bot to be a member and to have visibility of relevant messages (privacy mode/group permissions or administrator rights as applicable); channels generally require the bot to be added with suitable rights. Private groups require a valid invitation and membership.
+- Configure verified numeric IDs in TELEGRAM_MONITORED_CHAT_IDS, test a new post in each source, and verify that a lead record is stored and delivered to Arthur. Do not report a source as active before this end-to-end test.
+- Current main.py already has inspect_and_store_group_message() and group_property_leads storage, but only processes group/supergroup updates whose numeric IDs are in TELEGRAM_MONITORED_CHAT_IDS. The seven usernames/URLs above have NOT been resolved or activated by this specification update.
+- Current group classifier must be extended/tested for renter and buyer intent, not only owner listings. It must correctly detect phrases such as "сниму", "ищу жильё", "looking to rent", "seeking apartment", "looking to buy", including English/Russian and other supported languages, and classify agent posts separately.
+- Add an owner-only command to show source activation status and counts, without exposing private data to clients.
+
+## 13. Arthur's task mode — required operating model
+
+Arthur must be able to give Matvey natural-language work instructions directly in the existing Telegram bot, without editing code or repeating this master specification. Examples:
+- "Найди сегодня 10 самых дешёвых студий от собственников в Дубае до 45 000 AED в год."
+- "Ищи клиентов, которые хотят снять 1BR в Dubai Marina до 90 тысяч."
+- "Проверь новые объявления о продаже вилл."
+- "Покажи новые заявки арендаторов из Telegram за сегодня."
+
+Matvey must:
+- Treat Arthur's verified Telegram user ID as the administrator; never infer admin status from display name or username.
+- Parse the task into intent, geography, property type, bedrooms, budget/currency, rental period or sale, owner-direct preference, recency, source scope and result limit. Ask one concise clarification only when an essential parameter is missing.
+- Execute only capabilities that are actually connected and authorized. If a source/API is unavailable, identify that exact blocker and continue with accessible sources where useful.
+- Return actionable results with direct individual listing/message URLs, price and period, property type, area/building when verified, source, time checked, owner/agent evidence, and public contact only when published. Never substitute portal homepages or generic search pages for individual listing URLs.
+- Distinguish verified listings, unverified leads and unavailable sources. Never invent a property, price, availability, contact, URL or successful outreach.
+- Support one-time searches now. Background/continuous monitoring, scheduled reports and notifications require a deployed worker/scheduler, persistent storage and configured delivery channel; do not claim they run merely because Arthur asked.
+- Maintain a task history and provide /taskstatus or equivalent owner-only status, plus a concise result summary.
+- Allow Arthur to change or stop an active task in plain language. Avoid duplicate work and repeated alerts.
+- Never message, call, email or publish externally without the appropriate explicit authorization and platform-compliant integration.
+
+## 14. Property search and research sources
+
+Priority Dubai sources include Property Finder, Bayut, Dubizzle and Houza, plus official developer websites and official Dubai Land Department/RERA data where available. Search must return specific individual listing pages, not portal homepages or generic result pages. Prefer owner-direct listings only when the source explicitly supports that classification. Preserve exact prices, currencies, addresses, building names and deal terms.
+
+Other regional sources mentioned in the project include Avito, ЦИАН, Домклик, Яндекс Недвижимость, M2, Move.ru, Krisha.kz, OLX.kz and relevant local portals across the 15 former USSR countries, subject to lawful access and relevance. "Bizo" remains an unconfirmed platform name; ask Arthur to identify the exact service before integration.
+
+Paid portals, closed chats, WhatsApp groups and personal accounts require authorized accounts/API access. Do not bypass paywalls, login controls, anti-bot protections or platform restrictions. Do not claim continuous search unless a real worker and data sources are running.
+
+## 15. Current implementation and release gate (2026-11-17)
+
+Verified from repository source during review:
+- Existing repository: ArturDubaiAI/matvey-dubai-bot, default branch main.
+- Existing main.py already includes OpenAI Responses API dialogue (default model gpt-4.1-mini unless MATVEY_MODEL is configured), Telegram webhook handling, SQLite lead tables, child-agent profile commands, a group-message classifier, and strict rules against generic portal links.
+- Existing group monitoring is allow-list based on numeric TELEGRAM_MONITORED_CHAT_IDS. It currently returns without processing groups not on that list.
+- The database has group_property_leads, client_leads, owner_properties and partner_contacts tables.
+- The existing master instructions mention Property Finder, Bayut, Dubizzle and Houza and direct listing URL requirements.
+- The current code/spec do NOT establish that the seven Telegram sources above are joined, readable, resolved to numeric IDs, or live-tested.
+- No successful end-to-end test of live Telegram group monitoring, portal search, continuous background search, or WhatsApp customer conversations is established by this document update.
+- Render environment variables, persistent disk, Telegram bot membership/privacy settings, OpenAI API balance/model access and webhook delivery must be checked separately.
+- The existing Russian greeting must remain exactly: «Здравствуйте! Меня зовут Матвей. Я AI-помощник Артура по недвижимости. Чем могу вам помочь?» Do not add an unsolicited rent/buy/sell menu or intake questionnaire immediately after greeting.
+- Preserve all existing language, lead qualification, concise response, voice, data security, source verification and no-fabrication requirements above.
+
+Completion rule: Arthur may begin delegating real search tasks only after the deployed bot has passed a live admin-command test and at least one real search test returning verified individual listings or a clear, honest no-results report. Telegram group lead monitoring is a separate activation gate and must be tested source by source.
