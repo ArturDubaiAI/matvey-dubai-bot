@@ -454,6 +454,23 @@ def save_crm_contact(user_text, chat_id, sender_id):
                     record.get("requirements_summary"), now, now
                 ))
             else:
+                previous = conn.execute(
+                    "SELECT requirements_json FROM client_leads WHERE chat_id=?",
+                    (str(chat_id),)
+                ).fetchone()
+                try:
+                    accumulated = json.loads(previous[0] or "{}") if previous else {}
+                except (TypeError, ValueError):
+                    accumulated = {}
+                if not isinstance(accumulated, dict):
+                    accumulated = {}
+                prior_history = accumulated.get("history", [])
+                if not isinstance(prior_history, list):
+                    prior_history = []
+                new_summary = record.get("requirements_summary")
+                if new_summary and (not prior_history or prior_history[-1] != new_summary):
+                    prior_history.append(new_summary)
+                accumulated["history"] = prior_history[-20:]
                 conn.execute("""
                     INSERT INTO client_leads (
                         chat_id, telegram_user_id, language, intent, requirements_json,
@@ -470,7 +487,7 @@ def save_crm_contact(user_text, chat_id, sender_id):
                 """, (
                     str(chat_id), str(sender_id or ""), record.get("language"),
                     record.get("intent"),
-                    json.dumps({"summary": record.get("requirements_summary")}, ensure_ascii=False),
+                    json.dumps(accumulated, ensure_ascii=False),
                     record.get("phone"), record.get("consent_status") or "unknown",
                     "new", now, now
                 ))
