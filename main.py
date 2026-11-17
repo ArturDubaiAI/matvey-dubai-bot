@@ -877,7 +877,7 @@ def telegram():
                 )
             else:
                 answer = (
-                    "Здравствуйте! Меня зовут Матвей. Я AI-помощник Артура по недвижимости. "
+                    "Здравствуйте! Меня зовут Матвей. Я AI-ассистент Артура по недвижимости. "
                     "Чем могу вам помочь?"
                 )
             # Persist the greeting so the next message continues this conversation.
