@@ -249,11 +249,12 @@ def remove_generic_portal_urls(answer):
 
 def register_child_agent(raw_spec):
     """Create a child-agent profile; BotFather secrets are never generated or stored here."""
-    parts = [part.strip() for part in re.split(r"\s*[|;]\s*", raw_spec, maxsplit=2)]
+    parts = [part.strip() for part in re.split(r"\s*[|;]\s*", raw_spec, maxsplit=3)]
     if len(parts) < 2 or not parts[0] or not parts[1]:
-        raise ValueError("Формат: /createagent Название | Специализация | Язык")
+        raise ValueError("Формат: /createagent Название | Специализация | Язык | Дополнительные инструкции")
     display_name, specialization = parts[0], parts[1]
     language_policy = parts[2] if len(parts) > 2 and parts[2] else "auto"
+    system_notes = parts[3] if len(parts) > 3 else ""
     base_key = re.sub(r"[^a-z0-9]+", "_", display_name.lower()).strip("_")[:32] or "agent"
     now = datetime.now(timezone.utc).isoformat()
     init_property_database()
@@ -264,15 +265,27 @@ def register_child_agent(raw_spec):
         token_env_var = "TELEGRAM_TOKEN_" + key.upper()
         conn.execute(
             """INSERT INTO child_agents (
-                agent_key, display_name, specialization, language_policy,
+                agent_key, display_name, specialization, language_policy, system_notes,
                 token_env_var, status, created_at, updated_at
-            ) VALUES (?,?,?,?,?,?,?,?)""",
+            ) VALUES (?,?,?,?,?,?,?,?,?)""",
             (key, display_name[:100], specialization[:300], language_policy[:60],
-             token_env_var, "draft_token_required", now, now)
+             system_notes[:3000], token_env_var, "draft_token_required", now, now)
         )
         conn.commit()
     return {"agent_key": key, "display_name": display_name, "specialization": specialization,
-            "language_policy": language_policy, "token_env_var": token_env_var}
+            "language_policy": language_policy, "system_notes": system_notes,
+            "token_env_var": token_env_var}
+
+
+def update_child_agent_notes(agent_key, notes):
+    init_property_database()
+    with sqlite3.connect(MATVEY_DB_PATH, timeout=20) as conn:
+        cursor = conn.execute(
+            "UPDATE child_agents SET system_notes=?, updated_at=? WHERE agent_key=?",
+            (notes[:3000], datetime.now(timezone.utc).isoformat(), agent_key)
+        )
+        conn.commit()
+        return cursor.rowcount == 1
 
 
 def list_child_agents():
@@ -389,6 +402,7 @@ def child_agent_answer(agent, user_text, chat_id):
         answer = "\n".join(chunks).strip()
     if not answer:
         raise RuntimeError("Дочерний агент не вернул текстовый ответ.")
+    answer = remove_generic_portal_urls(answer)
     saved = (conversation_input + [{"role": "assistant", "content": answer}])[-MAX_HISTORY_MESSAGES:]
     with sqlite3.connect(MATVEY_DB_PATH, timeout=20) as conn:
         conn.execute(
@@ -1411,7 +1425,7 @@ def telegram():
             else:
                 agents = list_child_agents()
                 if not agents:
-                    answer = "Дочерних агентов пока нет. Создай профиль командой: /createagent Название | Специализация | Язык"
+                    answer = "Дочерних агентов пока нет. Создай профиль командой: /createagent Название | Специализация | Язык | Дополнительные инструкции"
                 else:
                     answer = "Дочерние агенты:\n" + "\n".join(
                         f"• {row[1]} ({row[0]}) — {row[2]}; язык: {row[3]}; статус: {row[5]}; токен: {row[4]}"
@@ -1433,6 +1447,18 @@ def telegram():
                     )
                 except ValueError as exc:
                     answer = str(exc)
+        elif incoming_text.startswith("/trainagent"):
+            if not is_admin:
+                answer = "Эта команда доступна только руководителю."
+            else:
+                raw_training = incoming_text[len("/trainagent"):].strip()
+                pieces = raw_training.split("|", 1)
+                if len(pieces) != 2 or not pieces[0].strip() or not pieces[1].strip():
+                    answer = "Формат: /trainagent ключ_агента | Правила и знания, которые нужно добавить"
+                elif update_child_agent_notes(pieces[0].strip().lower(), pieces[1].strip()):
+                    answer = "Инструкции дочернего агента обновлены. Новые правила будут применяться в следующих сообщениях."
+                else:
+                    answer = "Не нашёл дочернего агента с таким ключом."
         elif incoming_text.startswith("/activateagent"):
             if not is_admin:
                 answer = "Эта команда доступна только руководителю."
