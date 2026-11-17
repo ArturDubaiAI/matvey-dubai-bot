@@ -465,8 +465,27 @@ def telegram_send_audio(chat_id, text):
             temp_path = audio_file.name
 
         generated = False
-        is_russian = bool(re.search(r"[А-Яа-яЁё]", spoken_text))
-        is_english = bool(re.search(r"[A-Za-z]", spoken_text)) and not is_russian
+        is_armenian = bool(re.search(r"[\\u0530-\\u058F]", spoken_text))
+        is_russian = bool(re.search(r"[А-Яа-яЁё]", spoken_text)) and not is_armenian
+        is_english = bool(re.search(r"[A-Za-z]", spoken_text)) and not is_russian and not is_armenian
+
+        # Armenian replies use a native Armenian male neural voice.
+        if is_armenian:
+            async def render_armenian(path):
+                communicator = edge_tts.Communicate(
+                    spoken_text,
+                    voice="hy-AM-HaykNeural",
+                    rate="+0%",
+                    pitch="+0Hz",
+                )
+                await communicator.save(path)
+
+            try:
+                asyncio.run(render_armenian(temp_path))
+                if os.path.exists(temp_path) and os.path.getsize(temp_path) > 1000:
+                    generated = True
+            except Exception as exc:
+                logging.warning("Armenian Edge TTS failed; trying fallback: error_type=%s", type(exc).__name__)
 
         # Russian replies use a native Russian neural voice first. Normal pitch
         # and speed avoid the unnaturally low, sluggish delivery of the old settings.
@@ -702,12 +721,29 @@ def telegram_voice_to_text(message):
     transcription_response = requests.post(
         OPENAI_TRANSCRIPTIONS_URL,
         headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
-        data={"model": "gpt-transcribe"},
+        data=[
+            ("model", "gpt-transcribe"),
+            ("prompt", "Transcribe the speaker verbatim in the original spoken language. Do not translate. The recording may be in Armenian, Russian, English, or Arabic. Preserve the original language and writing system."),
+            ("languages[]", "hy"),
+            ("languages[]", "ru"),
+            ("languages[]", "en"),
+            ("languages[]", "ar"),
+        ],
         files={"file": ("telegram-voice.ogg", io.BytesIO(audio_response.content), "audio/ogg")},
         timeout=90,
     )
     transcription_response.raise_for_status()
-    transcript = transcription_response.json().get("text", "").strip()
+    transcription_result = transcription_response.json()
+    transcript = (transcription_result.get("text") or "").strip()
+    detected_languages = [
+        item.get("code") for item in transcription_result.get("languages", [])
+        if isinstance(item, dict) and item.get("code")
+    ]
+    logging.info(
+        "Voice transcription completed: detected_languages=%s, transcript_length=%s",
+        ",".join(detected_languages) if detected_languages else "unknown",
+        len(transcript),
+    )
     return transcript or None
 
 
