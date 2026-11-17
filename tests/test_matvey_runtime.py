@@ -57,6 +57,12 @@ class MatveyRuntimeTests(unittest.TestCase):
         self.assertIn("Never invent prices.", saved["system_notes"])
         self.assertIn("Always include direct listing URLs.", saved["system_notes"])
 
+    def test_child_agent_profiles_are_limited_to_fifty(self):
+        for index in range(50):
+            main.register_child_agent(f"Agent {index} | Specialist {index} | auto")
+        with self.assertRaises(ValueError):
+            main.register_child_agent("Agent 51 | Another specialty | auto")
+
     def test_child_webhook_update_is_deduplicated_per_agent(self):
         self.assertTrue(main.claim_child_update("agent_a", 1001))
         self.assertFalse(main.claim_child_update("agent_a", 1001))
