@@ -1,0 +1,35 @@
+name: Matvey CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Compile Python
+        run: python -m py_compile main.py
+      - name: Initialize and verify database schema
+        run: |
+          python - <<'PY'
+          import sqlite3
+          import main
+          main.init_property_database()
+          with sqlite3.connect(main.MATVEY_DB_PATH) as conn:
+              tables = {row[0] for row in conn.execute(
+                  "SELECT name FROM sqlite_master WHERE type='table'"
+              )}
+          required = {"owner_properties", "chat_conversations",
+                      "processed_telegram_updates", "client_leads", "partner_contacts"}
+          missing = required - tables
+          assert not missing, f"Missing CRM tables: {sorted(missing)}"
+          print("Database schema OK")
+          PY
