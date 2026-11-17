@@ -1479,7 +1479,16 @@ def telegram():
     is_admin = bool(sender_id and sender_id in ADMIN_TELEGRAM_IDS)
 
     conversation_text = incoming_text
+    voice_transcript = None
     try:
+        if (message.get("voice") or message.get("audio")) and OPENAI_API_KEY:
+            voice_transcript = telegram_voice_to_text(message)
+            if voice_transcript:
+                conversation_text = "\\n".join(
+                    part for part in (incoming_text, voice_transcript) if part
+                )
+                incoming_text = conversation_text
+
         if incoming_text.startswith("/exportdb"):
             if not is_admin:
                 answer = "Эта команда доступна только администратору."
@@ -1608,12 +1617,10 @@ def telegram():
             )
         else:
             if message.get("voice") or message.get("audio"):
-                transcript = telegram_voice_to_text(message)
-                if not transcript:
+                if not conversation_text:
                     answer = "Не удалось разобрать голосовое сообщение. Попробуйте записать его ещё раз."
                 else:
-                    conversation_text = transcript
-                    answer = openai_answer(transcript, chat_id, is_admin=is_admin)
+                    answer = openai_answer(conversation_text, chat_id, is_admin=is_admin)
             elif incoming_text:
                 answer = openai_answer(incoming_text, chat_id, is_admin=is_admin)
             elif message.get("photo"):
