@@ -302,7 +302,7 @@ def update_child_agent_notes(agent_key, notes):
         existing = (row[0] or "").strip()
         addition = (notes or "").strip()
         if addition and addition not in existing:
-            combined = (existing + "\\n" + addition).strip() if existing else addition
+            combined = (existing + "\n" + addition).strip() if existing else addition
         else:
             combined = existing
         conn.execute(
