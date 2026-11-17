@@ -214,8 +214,9 @@ def claim_child_update(agent_key, update_id):
 
 def remove_generic_portal_urls(answer):
     """Never return portal homepages or generic search/category URLs as property matches."""
-    url_pattern = re.compile(r"https?://[^\\s)<>\\]]+", re.IGNORECASE)
+    url_pattern = re.compile(r"https?://[^\s)<>]+", re.IGNORECASE)
     blocked = []
+
     def clean(match):
         url = match.group(0).rstrip(".,;")
         parsed = urlparse(url)
@@ -228,23 +229,23 @@ def remove_generic_portal_urls(answer):
         if not known_portal:
             return url
         has_listing_marker = bool(
-            re.search(r"details?|listing|/\\d{5,}(?:[./-]|$)", path)
-            or re.search(r"(?:^|/)\\d{5,}(?:/|$)", path)
+            re.search(r"details?|listing|/\d{5,}(?:[./-]|$)", path)
+            or re.search(r"(?:^|/)\d{5,}(?:/|$)", path)
         )
         if not has_listing_marker:
             blocked.append(url)
             return ""
         return url
+
     cleaned = url_pattern.sub(clean, answer)
-    cleaned = re.sub(r"[ \\t]+\\n", "\\n", cleaned)
-    cleaned = re.sub(r"\\n{3,}", "\\n\\n", cleaned).strip()
+    cleaned = re.sub(r"[ \t]+\n", "\n", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
     if blocked:
         cleaned += (
-            "\\n\\nЯ исключил ссылки на главные и поисковые страницы порталов. "
+            "\n\nЯ исключил ссылки на главные и поисковые страницы порталов. "
             "В подтверждённую подборку должны попадать только отдельные объявления."
         )
     return cleaned
-
 
 def register_child_agent(raw_spec):
     """Create a child-agent profile; BotFather secrets are never generated or stored here."""
