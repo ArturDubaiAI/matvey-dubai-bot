@@ -263,7 +263,7 @@ def remove_generic_portal_urls(answer):
 
 def register_child_agent(raw_spec):
     """Create a child-agent profile; BotFather secrets are never generated or stored here."""
-    parts = [part.strip() for part in re.split(r"\s*[|;]\s*", raw_spec, maxsplit=3)]
+    parts = [part.strip() for part in re.split(r"\s*\|\s*", raw_spec, maxsplit=3)]
     if len(parts) < 2 or not parts[0] or not parts[1]:
         raise ValueError("Формат: /createagent Название | Специализация | Язык | Дополнительные инструкции")
     display_name, specialization = parts[0], parts[1]
