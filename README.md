@@ -16,7 +16,7 @@ Telegram AI agent for Dubai residential and commercial real estate.
 - `ADMIN_TELEGRAM_IDS`: comma-separated numeric Telegram user IDs authorized for administrator mode.
 - `MATVEY_DB_PATH`: optional SQLite path. For Render persistence, mount a persistent disk and point this to its mount path, e.g. `/var/data/matvey_objects.db`.
 
-Each child-agent profile declares its own token environment variable, such as `TELEGRAM_TOKEN_LEASING_SPECIALIST`. Add the corresponding BotFather token as a protected Render environment variable, then run `/activateagent leasing_specialist` as an authorized administrator.
+Up to 50 child-agent profiles can be created. Profiles can be created either with the `/createagent` command or a natural-language administrator instruction. Each child-agent profile declares its own token environment variable, such as `TELEGRAM_TOKEN_LEASING_SPECIALIST`. Add the corresponding BotFather token as a protected Render environment variable, then run `/activateagent leasing_specialist` as an authorized administrator.
 
 ## Administrator commands
 - `/myid`
