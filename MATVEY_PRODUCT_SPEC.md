@@ -81,3 +81,12 @@ This file is the repository's working source of truth for product behavior. A re
 - Deduplicate by source chat and message ID. Only send WhatsApp notifications when Cloud API credentials and the owner's destination number are configured; record whether notification succeeded.
 - Never access private chats or historical group content without explicit access. Respect group rules, platform limits and user privacy.
 - WhatsApp Cloud API requires a valid business integration and may require approved templates outside the customer-service window. Missing credentials mean leads remain stored but are not forwarded.
+
+
+## Owner-direct Dubai listing source registry
+- The canonical source registry is `config/owner_listing_sources.json` (10 requested platforms).
+- Matvey must use this registry as the owner-direct discovery source list for Dubai sale/rent searches; the user must not need to name the portals in each request.
+- The registry distinguishes direct owner platforms, owner submission forms, agency-reviewed submissions, and sources with restricted or early-access availability.
+- A listed website is not proof of a working integration. Each source must be tested for accessible individual listings and compliant search access; report unavailable/manual-check sources honestly.
+- Never claim a listing is owner-direct without evidence, and never claim all 10 sources are actively searched until each integration has been verified.
+- Telegram community monitoring target: 36 Dubai real-estate groups (29 Russian-language plus 7 additional groups). The actual numeric chat IDs and membership permissions must be supplied/collected and configured in `TELEGRAM_MONITORED_CHAT_IDS`; the target count is not proof that 36 groups are connected.
