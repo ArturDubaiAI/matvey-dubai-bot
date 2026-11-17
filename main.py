@@ -193,6 +193,28 @@ def init_property_database():
                 PRIMARY KEY (agent_key, update_id)
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS group_property_leads (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_chat_id TEXT NOT NULL,
+                source_chat_title TEXT,
+                source_message_id TEXT NOT NULL,
+                source_url TEXT,
+                sender_id TEXT,
+                sender_name TEXT,
+                sender_username TEXT,
+                language TEXT,
+                lead_type TEXT,
+                is_owner INTEGER NOT NULL DEFAULT 0,
+                confidence REAL,
+                property_summary TEXT,
+                contact_text TEXT,
+                raw_text TEXT NOT NULL,
+                whatsapp_notified INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                UNIQUE(source_chat_id, source_message_id)
+            )
+        """)
         conn.commit()
 
 def claim_child_update(agent_key, update_id):
@@ -1460,6 +1482,170 @@ def telegram_status():
         return jsonify(details), 502
 
 
+def monitored_group_ids():
+    """Explicit allow-list: only groups configured by the owner are monitored."""
+    return {
+        value.strip() for value in os.environ.get("TELEGRAM_MONITORED_CHAT_IDS", "").split(",")
+        if value.strip()
+    }
+
+
+def build_group_message_url(chat, message):
+    username = (chat or {}).get("username")
+    message_id = (message or {}).get("message_id")
+    if username and message_id:
+        return f"https://t.me/{username}/{message_id}"
+    chat_id = str((chat or {}).get("id", ""))
+    if chat_id.startswith("-100") and message_id:
+        return f"https://t.me/c/{chat_id[4:]}/{message_id}"
+    return ""
+
+
+def notify_owner_whatsapp(text):
+    """Send a lead alert only when the owner explicitly configures WhatsApp Cloud API."""
+    phone_id = os.environ.get("WHATSAPP_PHONE_NUMBER_ID", "").strip()
+    token = os.environ.get("WHATSAPP_ACCESS_TOKEN", "").strip()
+    owner_number = re.sub(r"\D", "", os.environ.get("WHATSAPP_OWNER_NUMBER", ""))
+    if not (phone_id and token and owner_number):
+        return False
+    version = os.environ.get("WHATSAPP_GRAPH_API_VERSION", "v21.0").strip()
+    response = requests.post(
+        f"https://graph.facebook.com/{version}/{phone_id}/messages",
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        json={
+            "messaging_product": "whatsapp",
+            "to": owner_number,
+            "type": "text",
+            "text": {"preview_url": False, "body": text[:3900]},
+        },
+        timeout=20,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    return bool(payload.get("messages"))
+
+
+def inspect_and_store_group_message(message):
+    """Analyze an explicitly allowed Telegram group post for a voluntary property lead."""
+    chat = message.get("chat") or {}
+    if chat.get("type") not in ("group", "supergroup"):
+        return False
+    chat_id = str(chat.get("id", ""))
+    allowed = monitored_group_ids()
+    if not allowed or chat_id not in allowed:
+        return False
+    sender = message.get("from") or {}
+    if sender.get("is_bot"):
+        return False
+    raw_text = (message.get("text") or message.get("caption") or "").strip()
+    if len(raw_text) < 12 or not OPENAI_API_KEY:
+        return False
+    if not re.search(
+        r"собственник|владелец|сдаю|сдам|продаю|продам|сдается|сдаётся|"
+        r"аренда|квартира|вилла|студия|комнат|for rent|for sale|owner|landlord|"
+        r"property|apartment|villa|studio|rent|بيع|إيجار",
+        raw_text, re.I
+    ):
+        return False
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "is_property_lead": {"type": "boolean"},
+            "is_owner": {"type": "boolean"},
+            "lead_type": {"type": "string", "enum": ["owner_rent", "owner_sale", "tenant_request", "buyer_request", "agent", "other"]},
+            "language": {"type": "string"},
+            "confidence": {"type": "number"},
+            "summary": {"type": "string"},
+            "contact_text": {"type": "string"}
+        },
+        "required": ["is_property_lead", "is_owner", "lead_type", "language", "confidence", "summary", "contact_text"],
+        "additionalProperties": False
+    }
+    response = requests.post(
+        OPENAI_RESPONSES_URL,
+        headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
+        json={
+            "model": os.environ.get("MATVEY_MODEL", "gpt-4.1-mini"),
+            "instructions": (
+                "Classify this public Telegram group message for a Dubai real-estate lead. "
+                "Use only facts explicitly present. Never infer identity or claim owner status without evidence. "
+                "is_owner is true only when the author explicitly says they own/control the property. "
+                "Do not treat agents advertising for clients as owners. Do not invent contact details. "
+                "Return concise summary in Russian. contact_text may contain only contact details explicitly published in this message."
+            ),
+            "input": raw_text[:7000],
+            "text": {"format": {"type": "json_schema", "name": "telegram_property_lead", "strict": True, "schema": schema}},
+            "max_output_tokens": 450
+        },
+        timeout=30
+    )
+    response.raise_for_status()
+    payload = response.json()
+    output = payload.get("output_text") or ""
+    if not output:
+        for item in payload.get("output", []):
+            for part in item.get("content", []):
+                if part.get("type") == "output_text":
+                    output += part.get("text", "")
+    lead = json.loads(output)
+    if not lead.get("is_property_lead") or float(lead.get("confidence", 0)) < 0.65:
+        return False
+
+    message_id = str(message.get("message_id", ""))
+    if not message_id:
+        return False
+    sender_name = " ".join(
+        part for part in (sender.get("first_name", ""), sender.get("last_name", "")) if part
+    ).strip()
+    sender_username = sender.get("username", "")
+    source_url = build_group_message_url(chat, message)
+    now = datetime.now(timezone.utc).isoformat()
+    init_property_database()
+    with sqlite3.connect(MATVEY_DB_PATH, timeout=20) as conn:
+        cursor = conn.execute(
+            """INSERT OR IGNORE INTO group_property_leads
+               (source_chat_id, source_chat_title, source_message_id, source_url, sender_id,
+                sender_name, sender_username, language, lead_type, is_owner, confidence,
+                property_summary, contact_text, raw_text, created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (chat_id, chat.get("title", ""), message_id, source_url,
+             str(sender.get("id", "")), sender_name, sender_username,
+             lead.get("language", ""), lead.get("lead_type", "other"),
+             1 if lead.get("is_owner") else 0, float(lead.get("confidence", 0)),
+             lead.get("summary", "")[:1200], lead.get("contact_text", "")[:500],
+             raw_text[:7000], now)
+        )
+        inserted = cursor.rowcount == 1
+        conn.commit()
+    if not inserted:
+        return False
+
+    alert = (
+        "Новая заявка из Telegram-группы для Матвея\n"
+        f"Источник: {chat.get('title', chat_id)}\n"
+        f"Тип: {lead.get('lead_type', 'other')}\n"
+        f"Собственник подтверждён сообщением: {'да' if lead.get('is_owner') else 'нет'}\n"
+        f"Уверенность классификации: {float(lead.get('confidence', 0)):.0%}\n"
+        f"Автор: {sender_name or 'не указан'}"
+        + (f" (@{sender_username})" if sender_username else "") + "\n"
+        f"Суть: {lead.get('summary', '')}\n"
+        f"Контакт из сообщения: {lead.get('contact_text', '') or 'не опубликован'}\n"
+        f"Сообщение: {source_url or 'ссылка недоступна'}"
+    )
+    try:
+        if notify_owner_whatsapp(alert):
+            with sqlite3.connect(MATVEY_DB_PATH, timeout=20) as conn:
+                conn.execute(
+                    "UPDATE group_property_leads SET whatsapp_notified=1 WHERE source_chat_id=? AND source_message_id=?",
+                    (chat_id, message_id)
+                )
+                conn.commit()
+    except requests.RequestException as exc:
+        logging.warning("WhatsApp lead notification failed: error_type=%s", type(exc).__name__)
+    return True
+
+
 @app.route("/telegram", methods=["POST"])
 def telegram():
     data = request.get_json(silent=True) or {}
@@ -1492,6 +1678,15 @@ def telegram():
     incoming_text = (message.get("text") or message.get("caption") or "").strip()
     sender_id = str((message.get("from") or {}).get("id", ""))
     is_admin = bool(sender_id and sender_id in ADMIN_TELEGRAM_IDS)
+
+    # Group monitoring is silent: Matvey records qualifying leads but never replies
+    # into community chats. Only IDs explicitly configured by the owner are analyzed.
+    if (message.get("chat") or {}).get("type") in ("group", "supergroup"):
+        try:
+            inspect_and_store_group_message(message)
+        except Exception as exc:
+            logging.error("Group lead analysis failed: error_type=%s", type(exc).__name__)
+        return "OK", 200
 
     conversation_text = incoming_text
     voice_transcript = None
