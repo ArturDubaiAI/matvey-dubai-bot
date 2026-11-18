@@ -113,6 +113,10 @@ def init_property_database():
         existing_columns = {row[1] for row in conn.execute("PRAGMA table_info(owner_properties)")}
         migrations = {
             "lease_end_date": "TEXT",
+            "lease_term": "TEXT",
+            "payment_terms": "TEXT",
+            "deposit": "TEXT",
+            "contact_time": "TEXT",
             "contact_after_date": "TEXT",
             "contact_opt_in": "TEXT NOT NULL DEFAULT 'unknown'",
             "last_contact_at": "TEXT",
@@ -628,6 +632,8 @@ def save_owner_property_message(message, user_text, chat_id, sender_id):
         "deal_type: rent или sale. bedrooms — целое число либо null. "
         "whatsapp_allowed/call_allowed — yes/no/unknown. "
         "lease_end_date — дата окончания действующего договора строго YYYY-MM-DD, только если явно указана. "
+        "lease_term — срок аренды (например, 12 месяцев); payment_terms — количество чеков/график оплаты; "
+        "deposit — условия или размер депозита; contact_time — удобное время/дата звонка или сообщения. "
         "contact_opt_in — yes только при явном согласии на повторный контакт, иначе unknown/no. "
         "address — полный адрес, если указан; community — район/комьюнити; "
         "price и currency сохраняй как сказано. Не включай персональные данные, "
@@ -652,6 +658,10 @@ def save_owner_property_message(message, user_text, chat_id, sender_id):
             "currency": {"type": ["string", "null"]},
             "furnishing": {"type": ["string", "null"]},
             "availability": {"type": ["string", "null"]},
+            "lease_term": {"type": ["string", "null"]},
+            "payment_terms": {"type": ["string", "null"]},
+            "deposit": {"type": ["string", "null"]},
+            "contact_time": {"type": ["string", "null"]},
             "contact_phone": {"type": ["string", "null"]},
             "whatsapp_allowed": {"type": ["string", "null"], "enum": ["yes", "no", "unknown", None]},
             "call_allowed": {"type": ["string", "null"], "enum": ["yes", "no", "unknown", None]},
@@ -661,7 +671,8 @@ def save_owner_property_message(message, user_text, chat_id, sender_id):
         "required": [
             "is_owner_listing", "language", "deal_type", "property_category",
             "bedrooms", "property_type_detail", "address", "area", "community",
-            "price", "currency", "furnishing", "availability", "contact_phone",
+            "price", "currency", "furnishing", "availability", "lease_term",
+            "payment_terms", "deposit", "contact_time", "contact_phone",
             "whatsapp_allowed", "call_allowed", "lease_end_date", "contact_opt_in"
         ],
         "additionalProperties": False
@@ -697,10 +708,10 @@ def save_owner_property_message(message, user_text, chat_id, sender_id):
                 INSERT INTO owner_properties (
                     chat_id, telegram_user_id, language, deal_type, property_category,
                     bedrooms, property_type_detail, address, area, community, price,
-                    currency, furnishing, availability, contact_phone, whatsapp_allowed,
-                    call_allowed, photo_file_ids, raw_last_message, created_at, updated_at,
-                    lease_end_date, contact_opt_in
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    currency, furnishing, availability, lease_term, payment_terms, deposit,
+                    contact_time, contact_phone, whatsapp_allowed, call_allowed, photo_file_ids,
+                    raw_last_message, created_at, updated_at, lease_end_date, contact_opt_in
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(chat_id) DO UPDATE SET
                     telegram_user_id=excluded.telegram_user_id,
                     language=COALESCE(excluded.language, language),
@@ -715,6 +726,10 @@ def save_owner_property_message(message, user_text, chat_id, sender_id):
                     currency=COALESCE(excluded.currency, currency),
                     furnishing=COALESCE(excluded.furnishing, furnishing),
                     availability=COALESCE(excluded.availability, availability),
+                    lease_term=COALESCE(excluded.lease_term, lease_term),
+                    payment_terms=COALESCE(excluded.payment_terms, payment_terms),
+                    deposit=COALESCE(excluded.deposit, deposit),
+                    contact_time=COALESCE(excluded.contact_time, contact_time),
                     contact_phone=COALESCE(excluded.contact_phone, contact_phone),
                     whatsapp_allowed=COALESCE(excluded.whatsapp_allowed, whatsapp_allowed),
                     call_allowed=COALESCE(excluded.call_allowed, call_allowed),
@@ -729,6 +744,8 @@ def save_owner_property_message(message, user_text, chat_id, sender_id):
                 record.get("property_type_detail"), record.get("address"), record.get("area"),
                 record.get("community"), record.get("price"), record.get("currency"),
                 record.get("furnishing"), record.get("availability"),
+                record.get("lease_term"), record.get("payment_terms"), record.get("deposit"),
+                record.get("contact_time"),
                 shared_phone or record.get("contact_phone"), record.get("whatsapp_allowed"),
                 record.get("call_allowed"), json.dumps(photo_ids, ensure_ascii=False),
                 (user_text or "")[:6000], now, now,
@@ -748,7 +765,8 @@ def get_owner_property_context(chat_id):
         row = conn.execute(
             """SELECT deal_type, property_category, bedrooms, property_type_detail,
                       address, area, community, price, currency, furnishing,
-                      availability, contact_phone, whatsapp_allowed, call_allowed,
+                      availability, lease_term, payment_terms, deposit, contact_time,
+                      contact_phone, whatsapp_allowed, call_allowed,
                       lease_end_date, contact_opt_in, photo_file_ids
                FROM owner_properties WHERE chat_id=?""",
             (str(chat_id),)
@@ -758,7 +776,8 @@ def get_owner_property_context(chat_id):
     labels = (
         "Тип сделки", "Категория объекта", "Спальни", "Описание типа",
         "Адрес", "Район", "Комьюнити", "Цена", "Валюта", "Меблировка",
-        "Доступность", "Телефон", "WhatsApp разрешён", "Звонок разрешён",
+        "Доступность", "Срок аренды", "Оплата/чеки", "Депозит", "Удобное время связи",
+        "Телефон", "WhatsApp разрешён", "Звонок разрешён",
         "Окончание договора", "Согласие на контакт", "ID фотографий"
     )
     known = []
