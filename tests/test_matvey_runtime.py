@@ -173,7 +173,7 @@ class MatveyRuntimeTests(unittest.TestCase):
 
     def test_photo_updates_do_not_trigger_voice_replies(self):
         import inspect
-        source = inspect.getsource(main.telegram_webhook)
+        source = inspect.getsource(main.telegram)
         self.assertIn("if answer and not message.get(\"photo\"):", source)
         self.assertIn("if message.get(\"photo\"):\n                answer = None", source)
 
