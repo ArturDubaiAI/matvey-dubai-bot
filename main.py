@@ -132,6 +132,7 @@ def init_property_database():
             "photos_notification_sent_at": "TEXT",
             "lead_notified_admin_ids": "TEXT NOT NULL DEFAULT '[]'",
             "photo_notified_admin_ids": "TEXT NOT NULL DEFAULT '[]'",
+            "photo_ack_sent_at": "TEXT",
             "lead_notification_claimed_at": "TEXT",
             "photo_followup_1_claimed_at": "TEXT",
             "photo_followup_2_claimed_at": "TEXT"
@@ -607,12 +608,10 @@ def save_owner_property_message(message, user_text, chat_id, sender_id):
             "SELECT photo_file_ids FROM owner_properties WHERE chat_id=?", (str(chat_id),)
         ).fetchone()
         existing_owner = existing_row is not None
-        if existing_row:
-            try:
-                prior_photo_ids = json.loads(existing_row[0] or "[]")
-            except (TypeError, ValueError):
-                prior_photo_ids = []
-            photo_ids = list(dict.fromkeys(prior_photo_ids + photo_ids))
+        try:
+            prior_photo_ids = json.loads(existing_row[0] or "[]") if existing_row else []
+        except (TypeError, ValueError):
+            prior_photo_ids = []
     try:
         prior_history = json.loads(history_row[0] or "[]") if history_row else []
     except (TypeError, ValueError):
@@ -623,10 +622,11 @@ def save_owner_property_message(message, user_text, chat_id, sender_id):
         if isinstance(item, dict) and item.get("role") == "user" and item.get("content")
     ]
     extraction_input = "\n".join(prior_user_messages + ([user_text.strip()] if user_text and user_text.strip() else []))[-12000:]
-    photo_ids = [
+    incoming_photo_ids = [
         item.get("file_id") for item in (message.get("photo") or [])
         if item.get("file_id")
     ]
+    photo_ids = list(dict.fromkeys(prior_photo_ids + incoming_photo_ids))
     contact = message.get("contact") or {}
     shared_phone = contact.get("phone_number")
     text_for_detection = extraction_input.lower()
@@ -800,6 +800,43 @@ def _owner_listing_admin_text(row):
         pass
     lines.append(f"Фотографии: {'получены (' + str(len(photos)) + ')' if photos else 'ожидаются'}")
     return "\n".join(lines)
+
+
+def store_owner_photos(chat_id, photo_ids):
+    """Append photo IDs to one owner card and atomically claim a single owner acknowledgement."""
+    if not chat_id or not photo_ids:
+        return False
+    init_property_database()
+    now = datetime.now(timezone.utc).isoformat()
+    with sqlite3.connect(MATVEY_DB_PATH, timeout=30) as conn:
+        conn.execute("PRAGMA busy_timeout=30000")
+        row = conn.execute(
+            "SELECT photo_file_ids FROM owner_properties WHERE chat_id=?",
+            (str(chat_id),)
+        ).fetchone()
+        if not row:
+            return False
+        try:
+            saved_ids = json.loads(row[0] or "[]")
+        except (TypeError, ValueError):
+            saved_ids = []
+        if not isinstance(saved_ids, list):
+            saved_ids = []
+        saved_ids = list(dict.fromkeys(saved_ids + [pid for pid in photo_ids if pid]))
+        conn.execute(
+            """UPDATE owner_properties
+               SET photo_file_ids=?, photo_received_at=COALESCE(photo_received_at, ?),
+                   updated_at=?
+               WHERE chat_id=?""",
+            (json.dumps(saved_ids, ensure_ascii=False), now, now, str(chat_id))
+        )
+        claim = conn.execute(
+            """UPDATE owner_properties SET photo_ack_sent_at=?
+               WHERE chat_id=? AND (photo_ack_sent_at IS NULL OR photo_ack_sent_at='')""",
+            (now, str(chat_id))
+        )
+        conn.commit()
+        return claim.rowcount == 1
 
 
 def process_owner_listing_actions(chat_id):
@@ -2223,7 +2260,9 @@ def telegram():
                 process_owner_listing_actions(chat_id)
             except Exception as exc:
                 logging.exception("Owner intake failed before reply generation: error_type=%s", type(exc).__name__)
-            if message.get("voice") or message.get("audio"):
+            if message.get("photo"):
+                answer = None
+            elif message.get("voice") or message.get("audio"):
                 if not conversation_text:
                     answer = "Не удалось разобрать голосовое сообщение. Попробуйте записать его ещё раз."
                 else:
@@ -2234,36 +2273,26 @@ def telegram():
                 answer = "Фото получил. Добавлю его к карточке объекта."
             else:
                 answer = "Пока понимаю текст и голосовые сообщения. Отправьте, пожалуйста, текст или голос."
-        if not answer:
+        if not answer and not message.get("photo"):
             answer = "Не получилось подготовить ответ. Попробуйте ещё раз."
-        telegram_send(chat_id, answer)
-        # Save listing details and Telegram photo file IDs for both test/admin and client chats.
-        # Separate photo messages are attached to an existing listing record as well.
+        if answer:
+            telegram_send(chat_id, answer)
+        # Telegram sends separate updates for separate photos. Store every image, but
+        # acknowledge the photo batch only once and never generate a voice note for photos.
         if message.get("photo"):
             try:
-                init_property_database()
                 photo_ids = [p.get("file_id") for p in message.get("photo", []) if p.get("file_id")]
+                should_acknowledge = store_owner_photos(chat_id, photo_ids)
                 if photo_ids:
-                    with sqlite3.connect(MATVEY_DB_PATH, timeout=30) as conn:
-                        conn.execute("PRAGMA busy_timeout=30000")
-                        row = conn.execute("SELECT photo_file_ids FROM owner_properties WHERE chat_id=?", (str(chat_id),)).fetchone()
-                        if row:
-                            try:
-                                saved_ids = json.loads(row[0] or "[]")
-                            except (TypeError, ValueError):
-                                saved_ids = []
-                            saved_ids.extend(pid for pid in photo_ids if pid not in saved_ids)
-                            conn.execute("UPDATE owner_properties SET photo_file_ids=?, updated_at=? WHERE chat_id=?", (json.dumps(saved_ids, ensure_ascii=False), datetime.now(timezone.utc).isoformat(), str(chat_id)))
-                            conn.commit()
                     process_owner_listing_actions(chat_id)
-                    with sqlite3.connect(MATVEY_DB_PATH, timeout=30) as conn:
-                        conn.execute(
-                            "UPDATE owner_properties SET photo_received_at=? WHERE chat_id=?",
-                            (datetime.now(timezone.utc).isoformat(), str(chat_id))
-                        )
-                        conn.commit()
+                if should_acknowledge:
+                    telegram_send(
+                        chat_id,
+                        "Спасибо, фотографии получил и добавил к карточке вашей квартиры. "
+                        "Можете отправлять остальные — повторно подтверждать каждую фотографию не буду."
+                    )
             except Exception as exc:
-                logging.exception("Photo metadata save failed; text reply was already sent: error_type=%s", type(exc).__name__)
+                logging.exception("Photo metadata save failed: error_type=%s", type(exc).__name__)
 
         if not is_admin and conversation_text:
             try:
@@ -2271,12 +2300,13 @@ def telegram():
             except Exception as exc:
                 logging.exception("CRM intake failed; text reply was already sent: error_type=%s", type(exc).__name__)
 
-        try:
-            # Send the approved voice note about one second after the text reply.
-            time.sleep(1)
-            telegram_send_audio(chat_id, answer)
-        except Exception as exc:
-            logging.exception("Optional voice reply failed; text reply remains delivered: error_type=%s", type(exc).__name__)
+        if answer and not message.get("photo"):
+            try:
+                # Send the approved voice note about one second after the text reply.
+                time.sleep(1)
+                telegram_send_audio(chat_id, answer)
+            except Exception as exc:
+                logging.exception("Optional voice reply failed; text reply remains delivered: error_type=%s", type(exc).__name__)
         logging.info("Telegram reply sent successfully for update_id=%s", data.get("update_id"))
     except requests.HTTPError as exc:
         status = getattr(exc.response, "status_code", None)
