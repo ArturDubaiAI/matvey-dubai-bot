@@ -2004,10 +2004,6 @@ def free_mode_answer(user_text, chat_id, sender_id, is_admin=False, language_cod
     """Deterministic, no-OpenAI fallback for simple client intake. Stores dialogue locally."""
     text = (user_text or "").strip()
     ru = (language_code or "ru").lower().startswith("ru")
-    if is_admin:
-        return ("GPT отключён. Бесплатный режим работает: могу принимать заявки и вести простой диалог. "
-                "Для экспертного анализа и поиска GPT пока не используется.") if ru else (
-                "GPT is disabled. Free mode is active for basic intake. Advanced analysis/search is unavailable.")
     if not text:
         return ("Пожалуйста, напишите запрос текстом — бесплатный режим пока не обрабатывает голос." if ru
                 else "Please send your request as text; free mode cannot transcribe voice yet.")
