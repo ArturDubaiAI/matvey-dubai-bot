@@ -1313,6 +1313,7 @@ def openai_answer(user_text, chat_id=None, is_admin=False):
                     history = []
         current_turn = {"role": "user", "content": user_text[:12000]}
         conversation_input = history + [current_turn]
+        owner_context = get_owner_property_context(key) if key is not None else ""
 
         response = requests.post(
             OPENAI_RESPONSES_URL,
@@ -1323,7 +1324,7 @@ def openai_answer(user_text, chat_id=None, is_admin=False):
             json={
                 "model": os.environ.get("MATVEY_MODEL", "gpt-4.1-mini"),
                 "instructions": SYSTEM_INSTRUCTIONS + OWNER_LISTING_SEARCH_INSTRUCTIONS + (
-                    (get_owner_property_context(key) + "\n\n") if key is not None and get_owner_property_context(key) else ""
+                    (owner_context + "\n\n") if owner_context else ""
                 ) + (
                     "\n\nРЕЖИМ РУКОВОДИТЕЛЯ АКТИВЕН: собеседник прошёл проверку Telegram user ID. Отвечай Артуру как руководителю компании: давай внутренние рабочие сводки и выполняй поиск объектов по поручению. Не применяй запрет на внутренние контакты к Артуру, если данные законно доступны и источник указан. Не заявляй о неподключённых источниках.\n"
                     if is_admin else "\n\nКЛИЕНТСКИЙ РЕЖИМ: не раскрывай непубличные внутренние базы, личные номера и закрытые данные. Но помогай искать публичные объявления и предоставляй опубликованные в них контакты собственников/агентов и прямые ссылки, если они реально доступны. Не отказывай автоматически в запросе контактов; если публичного контакта нет, честно объясни это и дай ссылку на источник.\n"
