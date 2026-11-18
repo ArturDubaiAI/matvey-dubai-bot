@@ -2142,6 +2142,18 @@ def free_mode_answer(user_text, chat_id, sender_id, is_admin=False, language_cod
                 (key,str(sender_id or ""),language_code,intent,json.dumps(summary,ensure_ascii=False),
                  fields.get("phone"),"unknown","new",now,now))
         conn.commit()
+        if intent != "unknown" and not previous and ADMIN_TELEGRAM_IDS:
+            alert_text = (
+                "Новая заявка в бесплатном режиме Матвея\\n"
+                f"Тип: {intent}\\n"
+                f"Параметры: {json.dumps(summary, ensure_ascii=False)}\\n"
+                f"Telegram chat ID: {chat_id}"
+            )
+            for admin_id in sorted(ADMIN_TELEGRAM_IDS):
+                try:
+                    telegram_send(admin_id, alert_text)
+                except Exception as notify_exc:
+                    logging.warning("Free-mode lead notification failed: error_type=%s", type(notify_exc).__name__)
     return answer
 
 
