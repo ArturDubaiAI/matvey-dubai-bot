@@ -1112,6 +1112,23 @@ def get_owner_property_context(chat_id):
     )
 
 
+def owner_motivation_was_sent(history):
+    """Detect whether Matvey has already explained the benefit of sending owner photos."""
+    motivation_markers = (
+        "чем быстрее",
+        "представить ваш объект",
+        "представить объект заинтересованным клиентам",
+        "потенциальных арендаторов по вашему району",
+    )
+    for item in history if isinstance(history, list) else []:
+        if not isinstance(item, dict) or item.get("role") != "assistant":
+            continue
+        content = str(item.get("content") or "").lower()
+        if any(marker in content for marker in motivation_markers):
+            return True
+    return False
+
+
 def save_crm_contact(user_text, chat_id, sender_id):
     """Store explicitly relevant inbound client or agent enquiries; never initiate outreach."""
     if not OPENAI_API_KEY or not chat_id or not user_text:
@@ -1643,6 +1660,16 @@ def openai_answer(user_text, chat_id=None, is_admin=False):
         current_turn = {"role": "user", "content": user_text[:12000]}
         conversation_input = history + [current_turn]
         owner_context = get_owner_property_context(key) if key is not None else ""
+        dialogue_guard = ""
+        if owner_context and owner_motivation_was_sent(history):
+            dialogue_guard = (
+                "\\n\\nПОВТОРНАЯ МОТИВАЦИЯ ЗАПРЕЩЕНА: в этой переписке ты уже объяснил собственнику, "
+                "почему важно быстро прислать фотографии и параметры объекта. Не повторяй это объяснение, "
+                "не пересказывай его другими словами и не отправляй тот же текст повторно. Если собственник "
+                "повторно подтверждает контакт или пишет, что пришлёт фото, коротко подтверди получение "
+                "информации и скажи, что ждёшь фотографии. Задавай только следующий действительно "
+                "отсутствующий вопрос; не запрашивай уже предоставленные данные.\\n"
+            )
 
         response = requests.post(
             OPENAI_RESPONSES_URL,
@@ -1654,7 +1681,7 @@ def openai_answer(user_text, chat_id=None, is_admin=False):
                 "model": os.environ.get("MATVEY_MODEL", "gpt-4.1-mini"),
                 "instructions": SYSTEM_INSTRUCTIONS + OWNER_LISTING_SEARCH_INSTRUCTIONS + (
                     (owner_context + "\n\n") if owner_context else ""
-                ) + (
+                ) + dialogue_guard + (
                     "\n\nРЕЖИМ РУКОВОДИТЕЛЯ АКТИВЕН: собеседник прошёл проверку Telegram user ID. Отвечай Артуру как руководителю компании: давай внутренние рабочие сводки и выполняй поиск объектов по поручению. Не применяй запрет на внутренние контакты к Артуру, если данные законно доступны и источник указан. Не заявляй о неподключённых источниках.\n"
                     if is_admin else "\n\nКЛИЕНТСКИЙ РЕЖИМ: не раскрывай непубличные внутренние базы, личные номера и закрытые данные. Но помогай искать публичные объявления и предоставляй опубликованные в них контакты собственников/агентов и прямые ссылки, если они реально доступны. Не отказывай автоматически в запросе контактов; если публичного контакта нет, честно объясни это и дай ссылку на источник.\n"
                 ),
