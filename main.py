@@ -133,6 +133,7 @@ def init_property_database():
             "lead_notified_admin_ids": "TEXT NOT NULL DEFAULT '[]'",
             "photo_notified_admin_ids": "TEXT NOT NULL DEFAULT '[]'",
             "photo_ack_sent_at": "TEXT",
+            "owner_motivation_sent_at": "TEXT",
             "lead_notification_claimed_at": "TEXT",
             "photo_followup_1_claimed_at": "TEXT",
             "photo_followup_2_claimed_at": "TEXT"
@@ -1128,8 +1129,27 @@ def owner_motivation_markers():
     )
 
 
-def owner_motivation_was_sent(history):
-    """Detect whether Matvey has already sent the one-time owner motivation."""
+def owner_answer_contains_motivation(answer):
+    """Return whether an assistant answer contains the one-time owner motivation."""
+    lowered = str(answer or "").casefold()
+    return any(marker in lowered for marker in owner_motivation_markers())
+
+
+def mark_owner_motivation_sent(chat_id):
+    """Persist the one-time motivation flag on the owner's property card."""
+    if not chat_id:
+        return
+    init_property_database()
+    with sqlite3.connect(MATVEY_DB_PATH, timeout=20) as conn:
+        conn.execute(
+            "UPDATE owner_properties SET owner_motivation_sent_at=COALESCE(owner_motivation_sent_at, ?) WHERE chat_id=?",
+            (datetime.now(timezone.utc).isoformat(), str(chat_id)),
+        )
+        conn.commit()
+
+
+def owner_motivation_was_sent(history, chat_id=None):
+    """Check both retained chat history and the durable owner-card flag."""
     markers = owner_motivation_markers()
     for item in history if isinstance(history, list) else []:
         if not isinstance(item, dict) or item.get("role") != "assistant":
@@ -1137,6 +1157,14 @@ def owner_motivation_was_sent(history):
         content = str(item.get("content") or "").casefold()
         if any(marker in content for marker in markers):
             return True
+    if chat_id:
+        init_property_database()
+        with sqlite3.connect(MATVEY_DB_PATH, timeout=20) as conn:
+            row = conn.execute(
+                "SELECT owner_motivation_sent_at FROM owner_properties WHERE chat_id=?",
+                (str(chat_id),),
+            ).fetchone()
+        return bool(row and row[0])
     return False
 
 
@@ -1683,7 +1711,9 @@ def openai_answer(user_text, chat_id=None, is_admin=False):
         current_turn = {"role": "user", "content": user_text[:12000]}
         conversation_input = history + [current_turn]
         owner_context = get_owner_property_context(key) if key is not None else ""
-        motivation_already_sent = owner_motivation_was_sent(history)
+        motivation_already_sent = owner_motivation_was_sent(history, key)
+        if owner_context and motivation_already_sent:
+            mark_owner_motivation_sent(key)
         dialogue_guard = ""
         if motivation_already_sent:
             dialogue_guard = (
@@ -1730,8 +1760,11 @@ def openai_answer(user_text, chat_id=None, is_admin=False):
             raise RuntimeError("OpenAI returned no text output")
 
         answer = remove_generic_portal_urls(answer.strip())
-        if owner_context and motivation_already_sent:
-            answer = suppress_repeated_owner_motivation(answer, motivation_already_sent)
+        if owner_context:
+            if motivation_already_sent:
+                answer = suppress_repeated_owner_motivation(answer, True)
+            elif owner_answer_contains_motivation(answer):
+                mark_owner_motivation_sent(key)
         if key is not None:
             saved_history = (conversation_input + [
                 {"role": "assistant", "content": answer}
