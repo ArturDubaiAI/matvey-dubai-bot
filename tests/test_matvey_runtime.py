@@ -480,6 +480,21 @@ class MatveyRuntimeTests(unittest.TestCase):
             row = conn.execute("SELECT 1 FROM client_leads WHERE chat_id=?", ("admin-free-1",)).fetchone()
         self.assertIsNone(row)
 
+    def test_free_mode_notifies_admin_only_once_for_new_lead(self):
+        old_ids = main.ADMIN_TELEGRAM_IDS
+        old_send = main.telegram_send
+        notifications = []
+        main.ADMIN_TELEGRAM_IDS = {"999"}
+        main.telegram_send = lambda chat_id, text: notifications.append((chat_id, text))
+        try:
+            main.free_mode_answer("Ищу квартиру в Dubai Marina", "notify-client", "555", language_code="ru")
+            main.free_mode_answer("2 спальни", "notify-client", "555", language_code="ru")
+            self.assertEqual(len(notifications), 1)
+            self.assertEqual(notifications[0][0], "999")
+        finally:
+            main.ADMIN_TELEGRAM_IDS = old_ids
+            main.telegram_send = old_send
+
 if __name__ == "__main__":
     unittest.main()
     def test_free_fallback_collects_rental_lead_without_openai(self):
