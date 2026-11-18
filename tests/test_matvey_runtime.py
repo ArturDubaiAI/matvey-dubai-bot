@@ -473,12 +473,13 @@ class MatveyRuntimeTests(unittest.TestCase):
         self.assertEqual(row[0], "owner_rent")
         self.assertIn("JVC", row[1])
 
-    def test_free_fallback_admin_does_not_create_client_lead(self):
-        answer = main.free_mode_answer("Проверь заявки", "admin-free-1", "12345", is_admin=True, language_code="ru")
-        self.assertIn("GPT отключён", answer)
+    def test_free_fallback_admin_can_test_client_intake(self):
+        answer = main.free_mode_answer("Ищу квартиру в Dubai Marina", "admin-free-1", "12345", is_admin=True, language_code="ru")
+        self.assertIn("спален", answer.lower())
         with sqlite3.connect(main.MATVEY_DB_PATH) as conn:
-            row = conn.execute("SELECT 1 FROM client_leads WHERE chat_id=?", ("admin-free-1",)).fetchone()
-        self.assertIsNone(row)
+            row = conn.execute("SELECT intent FROM client_leads WHERE chat_id=?", ("admin-free-1",)).fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(row[0], "tenant_rent")
 
     def test_free_mode_notifies_admin_only_once_for_new_lead(self):
         old_ids = main.ADMIN_TELEGRAM_IDS
