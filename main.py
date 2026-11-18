@@ -30,7 +30,10 @@ TOKEN_MATCHES = re.findall(
 )
 TELEGRAM_TOKEN = TOKEN_MATCHES[0] if len(TOKEN_MATCHES) == 1 else ""
 TOKEN_FORMAT_VALID = len(TOKEN_MATCHES) == 1
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
+# OpenAI is fail-closed: no API calls are possible unless the owner explicitly enables them.
+MATVEY_OPENAI_ENABLED = os.environ.get("MATVEY_OPENAI_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
+OPENAI_API_KEY_RAW = os.environ.get("OPENAI_API_KEY", "").strip()
+OPENAI_API_KEY = OPENAI_API_KEY_RAW if MATVEY_OPENAI_ENABLED else ""
 # Comma-separated numeric Telegram user IDs authorized for owner/admin mode.
 ADMIN_TELEGRAM_IDS = {value.strip() for value in os.environ.get("ADMIN_TELEGRAM_IDS", "").split(",") if value.strip().isdigit()}
 WEBHOOK_URL = "https://matvey-dubai-bot.onrender.com/telegram"
