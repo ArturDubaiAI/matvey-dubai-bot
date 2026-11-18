@@ -306,6 +306,7 @@ def enforce_client_response_boundary(user_text, answer):
     answer = re.sub(r"\[[^\]]{1,200}\]\(https?://[^)]+\)", "", answer, flags=re.IGNORECASE)
     answer = re.sub(r"https?://\S+|www\.\S+", "", answer, flags=re.IGNORECASE)
     answer = re.sub(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", "", answer, flags=re.IGNORECASE)
+    answer = re.sub(r"(?<!\w)(?:\+971|00971|0[2-9])[- .()]*[0-9][0-9 .()/-]{5,}[0-9](?!\w)", "", answer)
     answer = re.sub(r"[ \t]+\n", "\n", answer)
     answer = re.sub(r"\n{3,}", "\n\n", answer).strip()
     forbidden = r"(?:property\s*finder|bayut|dubizzle|houza|propertyfinder|обратитесь\s+(?:в|к)|напишите\s+(?:в|на)|свяжитесь\s+с|рекомендую\s+(?:агентств|компан|сайт)|можете\s+(?:обратиться|написать)|visit\s+(?:the\s+)?(?:website|site|portal)|contact\s+(?:the\s+)?(?:agency|company)|real\s+estate\s+(?:company|agency))"
