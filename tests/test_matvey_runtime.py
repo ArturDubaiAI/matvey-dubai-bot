@@ -133,6 +133,18 @@ class MatveyRuntimeTests(unittest.TestCase):
             ordinary_answer
         )
 
+    def test_owner_motivation_flag_persists_on_property_card(self):
+        now = "2026-11-18T08:40:00+00:00"
+        with __import__("sqlite3").connect(main.MATVEY_DB_PATH) as conn:
+            conn.execute(
+                "INSERT INTO owner_properties (chat_id, created_at, updated_at) VALUES (?,?,?)",
+                ("owner-persistent-motivation", now, now)
+            )
+        main.mark_owner_motivation_sent("owner-persistent-motivation")
+        self.assertTrue(
+            main.owner_motivation_was_sent([], "owner-persistent-motivation")
+        )
+
     def test_owner_property_context_includes_known_facts_and_forbids_reasking(self):
         with __import__("sqlite3").connect(main.MATVEY_DB_PATH) as conn:
             conn.execute(
