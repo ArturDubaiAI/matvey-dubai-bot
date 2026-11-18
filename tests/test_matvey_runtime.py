@@ -405,5 +405,34 @@ class MatveyRuntimeTests(unittest.TestCase):
             main.TELEGRAM_API = original_api
             main.telegram_send = original_send
 
+
+    def test_dubai_real_estate_expert_knowledge_is_injected(self):
+        knowledge = main.DUBAI_REAL_ESTATE_EXPERT_INSTRUCTIONS
+        for required in (
+            "Form A", "Form B", "Form F", "Ejari", "Oqood", "Title Deed",
+            "Dubai Land Department", "RERA", "Law No. 26 of 2007",
+            "Law No. 33 of 2008", "Decree No. 43 of 2013",
+            "gross yield", "net operating yield", "Mollak",
+            "Rental Disputes Center", "commercial", "escrow"
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required.lower(), knowledge.lower())
+
+    def test_matvey_defaults_to_current_gpt_consultant_model(self):
+        self.assertEqual(main.MATVEY_DEFAULT_MODEL, "gpt-6.2-sol")
+
+    def test_expert_instructions_require_current_sources_and_no_fake_integrations(self):
+        knowledge = main.DUBAI_REAL_ESTATE_EXPERT_INSTRUCTIONS.lower()
+        self.assertIn("дату проверки", knowledge)
+        self.assertIn("не заявляй, что у матвея есть api", knowledge)
+        self.assertIn("не выдавай", knowledge)
+        self.assertIn("официальн", knowledge)
+
+    def test_form_a_b_f_definitions_are_not_confused(self):
+        knowledge = main.DUBAI_REAL_ESTATE_EXPERT_INSTRUCTIONS.lower()
+        self.assertIn("form a — брокерское соглашение собственника", knowledge)
+        self.assertIn("form b — соглашение покупателя", knowledge)
+        self.assertIn("form f — унифицированный договор купли-продажи", knowledge)
+
 if __name__ == "__main__":
     unittest.main()
