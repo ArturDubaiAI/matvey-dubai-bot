@@ -2067,22 +2067,19 @@ def free_mode_answer(user_text, chat_id, sender_id, is_admin=False, language_cod
         if budget_match:
             fields["budget"] = budget_match.group(1).replace(",", "")
         if shared_phone:
-            fields["phone"] = shared_phone.strip()
+            fields["phone"] = str(shared_phone).strip()
         else:
             phone_match = re.search(r"(?:\+?\d[\d ()-]{7,}\d)", text)
             if phone_match:
                 fields["phone"] = phone_match.group(0).strip()
-        if fields.get("phone") and re.search(r"\b(?:да|yes|доступен|есть|можно|нет|no|не пользуюсь|не доступен)\b", lowered):
-            wa_match = re.search(r"\b(?:да|yes|доступен|есть|можно)\b", lowered)
-            no_match = re.search(r"\b(?:нет|no|не пользуюсь|не доступен)\b", lowered)
-            if wa_match and not no_match:
+        if fields.get("phone"):
+            if re.search(r"\b(?:да|yes)\b", lowered) and not re.search(r"\b(?:нет|no)\b", lowered):
                 fields["whatsapp_allowed"] = "yes"
-            elif no_match:
+            elif re.search(r"\b(?:нет|no)\b", lowered):
                 fields["whatsapp_allowed"] = "no"
         if re.search(r"\b(?:today|сегодня|завтра|tomorrow|\d{1,2}[./-]\d{1,2})\b", lowered):
             fields["move_date"] = text[:100]
         # Progressive one-question prompts; only collected values are skipped.
-        contact_was_complete = bool(fields.get("phone") and fields.get("whatsapp_allowed") in ("yes", "no"))
         if intent == "owner_rent":
             if not fields.get("property_type"):
                 answer = "Хорошо, можем помочь сдать. Что именно вы сдаёте? (квартира, вилла, студия и т. д.)"
@@ -2136,7 +2133,12 @@ def free_mode_answer(user_text, chat_id, sender_id, is_admin=False, language_cod
         else:
             answer = ("Помогу с недвижимостью в Дубае. Вы ищете жильё для аренды, хотите купить, продать или сдать свой объект?"
                        if ru else "I can help with Dubai real estate. Are you looking to rent, buy, sell, or rent out a property?")
-        # Mandatory contact gate: never treat a lead as complete without phone and WhatsApp status.\n        if intent != "unknown" and not fields.get("phone"):\n            answer = ("Пожалуйста, пришлите фотографии объекта и ваш номер телефона. Нажмите кнопку ниже, чтобы поделиться контактом, или напишите номер вручную." if ru else "Please send property photos and your phone number. Use the button below to share your contact, or type your number manually.") if intent in ("owner_rent", "owner_sale") else ("Чтобы завершить заявку, пожалуйста, отправьте ваш номер телефона. Нажмите кнопку ниже, чтобы поделиться контактом, или напишите номер вручную." if ru else "To complete your request, please send your phone number. Use the button below to share your contact, or type your number manually.")\n        elif intent != "unknown" and fields.get("phone") and fields.get("whatsapp_allowed") not in ("yes", "no"):\n            answer = "Есть ли WhatsApp на этом номере? Ответьте «Да» или «Нет»." if ru else "Is WhatsApp available on this number? Please answer Yes or No."\n        fields["last_message"] = text[:1000]
+        contact_was_complete = bool(fields.get("phone") and fields.get("whatsapp_allowed") in ("yes", "no"))
+        if intent != "unknown" and not fields.get("phone"):
+            answer = ("Пожалуйста, пришлите фотографии объекта и номер телефона. Нажмите кнопку ниже, чтобы поделиться контактом, или напишите номер вручную." if ru else "Please send property photos and your phone number. Tap below to share your contact, or type it manually.") if intent in ("owner_rent", "owner_sale") else ("Чтобы завершить заявку, пришлите ваш номер телефона. Нажмите кнопку ниже, чтобы поделиться контактом, или напишите номер вручную." if ru else "To complete your request, send your phone number. Tap below to share your contact, or type it manually.")
+        elif intent != "unknown" and fields.get("phone") and fields.get("whatsapp_allowed") not in ("yes", "no"):
+            answer = "Есть ли WhatsApp на этом номере? Ответьте «Да» или «Нет»." if ru else "Is WhatsApp available on this number? Reply Yes or No."
+        fields["last_message"] = text[:1000]
         history.extend([{"role":"user","content":text[:4000]}, {"role":"assistant","content":answer}])
         history = history[-MAX_HISTORY_MESSAGES:]
         now = datetime.now(timezone.utc).isoformat()
@@ -2152,7 +2154,8 @@ def free_mode_answer(user_text, chat_id, sender_id, is_admin=False, language_cod
                 (key,str(sender_id or ""),language_code,intent,json.dumps(summary,ensure_ascii=False),
                  fields.get("phone"),"unknown","new",now,now))
         conn.commit()
-        contact_update = bool(fields.get("phone") and fields.get("whatsapp_allowed") in ("yes", "no") and not contact_was_complete)\n        if intent != "unknown" and ADMIN_TELEGRAM_IDS and (not previous or contact_update):
+        contact_complete = bool(fields.get("phone") and fields.get("whatsapp_allowed") in ("yes", "no"))
+        if intent != "unknown" and contact_complete and not contact_was_complete and ADMIN_TELEGRAM_IDS:
             alert_text = (
                 "Новая заявка в бесплатном режиме Матвея\n"
                 f"Тип: {intent}\n"
@@ -2670,7 +2673,8 @@ def telegram():
         logging.exception("Could not register Telegram update: error_type=%s", type(exc).__name__)
         # Continue processing rather than dropping a legitimate customer message.
 
-    incoming_text = (message.get("text") or message.get("caption") or "").strip()\n    shared_contact = (message.get("contact") or {}).get("phone_number")
+    incoming_text = (message.get("text") or message.get("caption") or "").strip()
+    shared_contact_phone = (message.get("contact") or {}).get("phone_number"
     sender_id = str((message.get("from") or {}).get("id", ""))
     is_admin = bool(sender_id and sender_id in ADMIN_TELEGRAM_IDS)
 
@@ -2816,8 +2820,9 @@ def telegram():
                 )
                 conn.commit()
         elif not OPENAI_API_KEY:
-            answer = free_mode_answer(incoming_text, chat_id, sender_id, shared_phone=shared_contact, is_admin=is_admin,
-                                     language_code=(message.get("from", {}).get("language_code") or "ru"))
+            answer = free_mode_answer(incoming_text, chat_id, sender_id, is_admin=is_admin,
+                                     language_code=(message.get("from", {}).get("language_code") or "ru"),
+                                     shared_phone=shared_contact_phone)
         else:
             # Extract and persist owner facts BEFORE generating the reply, so the model
             # receives the current structured listing card and can skip answered questions.
@@ -2842,12 +2847,12 @@ def telegram():
         if not answer and not message.get("photo"):
             answer = "Не получилось подготовить ответ. Попробуйте ещё раз."
         if answer:
-            reply_markup = None
+            markup = None
             if "номер телефона" in answer.lower() or "phone number" in answer.lower():
-                reply_markup = {"keyboard": [[{"text": "📱 Поделиться номером телефона", "request_contact": True}]], "resize_keyboard": True, "one_time_keyboard": True}
-            elif "whatsapp" in answer.lower() and ("да" in answer.lower() or "yes" in answer.lower()):
-                reply_markup = {"keyboard": [[{"text": "Да"}, {"text": "Нет"}]], "resize_keyboard": True, "one_time_keyboard": True}
-            telegram_send(chat_id, answer, reply_markup=reply_markup)
+                markup = {"keyboard": [[{"text": "📱 Поделиться номером телефона", "request_contact": True}]], "resize_keyboard": True, "one_time_keyboard": True}
+            elif "whatsapp" in answer.lower():
+                markup = {"keyboard": [[{"text": "Да"}, {"text": "Нет"}]], "resize_keyboard": True, "one_time_keyboard": True}
+            telegram_send(chat_id, answer, reply_markup=markup}
         # Telegram sends separate updates for separate photos. Store every image, but
         # acknowledge the photo batch only once and never generate a voice note for photos.
         if message.get("photo"):
