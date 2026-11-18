@@ -995,9 +995,10 @@ def process_owner_listing_actions(chat_id):
         except Exception as exc:
             failures.append((admin_id, type(exc).__name__))
     whatsapp_sent = notify_owner_whatsapp(summary)
-    all_delivered = bool(whatsapp_sent)
+    telegram_admins_delivered = bool(admins) and all(admin_id in delivered for admin_id in admins)
+    all_delivered = telegram_admins_delivered or bool(whatsapp_sent)
     if not whatsapp_sent:
-        logging.warning("Owner lead WhatsApp notification not delivered; check WhatsApp Cloud API configuration")
+        logging.info("Owner lead WhatsApp notification not delivered; Telegram admin delivery is tracked separately")
     with sqlite3.connect(MATVEY_DB_PATH, timeout=30) as conn:
         if all_delivered:
             conn.execute("""UPDATE owner_properties SET lead_notification_status='sent',
