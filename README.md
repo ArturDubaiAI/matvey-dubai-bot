@@ -12,7 +12,8 @@ Telegram AI agent for Dubai residential and commercial real estate.
 
 ## Required environment variables
 - `TELEGRAM_TOKEN`: main BotFather token.
-- `OPENAI_API_KEY`: OpenAI API key.
+- `OPENAI_API_KEY`: OpenAI API key (store only as a protected hosting environment variable; never paste it into chat or source code).
+- `MATVEY_OPENAI_ENABLED`: global OpenAI kill switch. Defaults to `0` (disabled). Set to `1` only after usage controls and billing safeguards have been verified. With the default, text, voice transcription, group classification and child-agent OpenAI calls are disabled.
 - `MATVEY_MODEL`: optional shared model override for Matvey's chat, group-lead analysis and child agents; defaults to `gpt-4.1-mini`.
 - `ADMIN_TELEGRAM_IDS`: comma-separated numeric Telegram user IDs authorized for administrator mode.
 - `MATVEY_DB_PATH`: optional SQLite path. For Render persistence, mount a persistent disk and point this to its mount path, e.g. `/var/data/matvey_objects.db`.

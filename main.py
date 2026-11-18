@@ -30,7 +30,10 @@ TOKEN_MATCHES = re.findall(
 )
 TELEGRAM_TOKEN = TOKEN_MATCHES[0] if len(TOKEN_MATCHES) == 1 else ""
 TOKEN_FORMAT_VALID = len(TOKEN_MATCHES) == 1
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
+# OpenAI is fail-closed: no API calls are possible unless the owner explicitly enables them.
+MATVEY_OPENAI_ENABLED = os.environ.get("MATVEY_OPENAI_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
+OPENAI_API_KEY_RAW = os.environ.get("OPENAI_API_KEY", "").strip()
+OPENAI_API_KEY = OPENAI_API_KEY_RAW if MATVEY_OPENAI_ENABLED else ""
 # Comma-separated numeric Telegram user IDs authorized for owner/admin mode.
 ADMIN_TELEGRAM_IDS = {value.strip() for value in os.environ.get("ADMIN_TELEGRAM_IDS", "").split(",") if value.strip().isdigit()}
 WEBHOOK_URL = "https://matvey-dubai-bot.onrender.com/telegram"
@@ -992,9 +995,10 @@ def process_owner_listing_actions(chat_id):
         except Exception as exc:
             failures.append((admin_id, type(exc).__name__))
     whatsapp_sent = notify_owner_whatsapp(summary)
-    all_delivered = bool(whatsapp_sent)
+    telegram_admins_delivered = bool(admins) and all(admin_id in delivered for admin_id in admins)
+    all_delivered = telegram_admins_delivered or bool(whatsapp_sent)
     if not whatsapp_sent:
-        logging.warning("Owner lead WhatsApp notification not delivered; check WhatsApp Cloud API configuration")
+        logging.info("Owner lead WhatsApp notification not delivered; Telegram admin delivery is tracked separately")
     with sqlite3.connect(MATVEY_DB_PATH, timeout=30) as conn:
         if all_delivered:
             conn.execute("""UPDATE owner_properties SET lead_notification_status='sent',

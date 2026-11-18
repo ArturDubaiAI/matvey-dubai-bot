@@ -7,6 +7,10 @@ import main
 
 
 class MatveyRuntimeTests(unittest.TestCase):
+    def test_openai_is_disabled_by_default(self):
+        # A configured secret alone must not activate paid API calls.
+        self.assertFalse(main.MATVEY_OPENAI_ENABLED)
+        self.assertEqual(main.OPENAI_API_KEY, "")
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         main.MATVEY_DB_PATH = os.path.join(self.temp_dir.name, "matvey_test.sqlite3")
