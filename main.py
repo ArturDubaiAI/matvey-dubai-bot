@@ -1353,7 +1353,8 @@ def save_crm_contact(user_text, chat_id, sender_id):
                 if not isinstance(prior_history, list):
                     prior_history = []
                 new_summary = record.get("requirements_summary")
-                if new_summary and (not prior_history or prior_history[-1] != new_summary):
+                summary_changed = bool(new_summary and (not prior_history or prior_history[-1] != new_summary))
+                if summary_changed:
                     prior_history.append(new_summary)
                 accumulated["history"] = prior_history[-20:]
                 conn.execute("""
@@ -1377,6 +1378,18 @@ def save_crm_contact(user_text, chat_id, sender_id):
                     "new", now, now
                 ))
             conn.commit()
+        if kind == "client" and summary_changed:
+            alert = (
+                "НОВАЯ/ОБНОВЛЁННАЯ ЗАЯВКА КЛИЕНТА\\n"
+                f"Имя: {record.get('name') or 'не указано'}\\n"
+                f"Телефон: {record.get('phone') or 'не указан'}\\n"
+                f"Telegram chat ID: {chat_id}\\n"
+                f"Язык: {record.get('language') or 'не указан'}\\n"
+                f"Запрос: {record.get('intent') or 'не указан'}\\n"
+                f"Параметры: {new_summary}"
+            )
+            if not notify_owner_whatsapp(alert):
+                logging.warning("Client lead WhatsApp notification not delivered; check WhatsApp Cloud API configuration")
     except Exception as exc:
         logging.error("CRM intake failed: error_type=%s", type(exc).__name__)
 
@@ -1511,7 +1524,8 @@ def save_buyer_lead_card(chat_id, sender_id):
                 + f"\nСводка: {lead.get('summary') or '—'}\nChat ID: {chat_id}"
                 + "\nМаркетинговые сообщения — только при явном согласии."
             )
-            sent = True
+            whatsapp_sent = notify_owner_whatsapp(alert)
+            sent = bool(whatsapp_sent)
             for admin_id in sorted(ADMIN_TELEGRAM_IDS):
                 try:
                     telegram_send(admin_id, alert)
