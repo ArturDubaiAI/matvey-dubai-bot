@@ -581,13 +581,31 @@ def save_owner_property_message(message, user_text, chat_id, sender_id):
     """Extract and upsert voluntarily supplied owner listing details into SQLite."""
     if not OPENAI_API_KEY or not chat_id:
         return
+    init_property_database()
+    with sqlite3.connect(MATVEY_DB_PATH, timeout=20) as conn:
+        history_row = conn.execute(
+            "SELECT history_json FROM chat_conversations WHERE chat_id=?", (str(chat_id),)
+        ).fetchone()
+        existing_owner = conn.execute(
+            "SELECT 1 FROM owner_properties WHERE chat_id=?", (str(chat_id),)
+        ).fetchone() is not None
+    try:
+        prior_history = json.loads(history_row[0] or "[]") if history_row else []
+    except (TypeError, ValueError):
+        prior_history = []
+    prior_user_messages = [
+        str(item.get("content", "")).strip()
+        for item in prior_history
+        if isinstance(item, dict) and item.get("role") == "user" and item.get("content")
+    ]
+    extraction_input = "\n".join(prior_user_messages + ([user_text.strip()] if user_text and user_text.strip() else []))[-12000:]
     photo_ids = [
         item.get("file_id") for item in (message.get("photo") or [])
         if item.get("file_id")
     ]
     contact = message.get("contact") or {}
     shared_phone = contact.get("phone_number")
-    text_for_detection = (user_text or "").lower()
+    text_for_detection = extraction_input.lower()
     owner_signal = bool(
         photo_ids or shared_phone or re.search(
             r"сдаю|сдать|сдается|сдаётся|собственник|владелец|продаю|продать|"
@@ -596,10 +614,12 @@ def save_owner_property_message(message, user_text, chat_id, sender_id):
             text_for_detection
         )
     )
-    if not owner_signal:
+    if not owner_signal and not existing_owner:
         return
     extraction_prompt = (
-        "Извлеки только факты из последнего сообщения владельца недвижимости. "
+        "Извлеки факты из всей переписки собственника, переданной во входном тексте. "
+        "Учитывай только сообщения пользователя, игнорируй вопросы и формулировки Матвея. "
+        "Сохраняй ранее сообщённые факты, если в последних сообщениях они не отменены. "
         "Верни JSON строго по схеме. Не додумывай неизвестное: используй null. "
         "is_owner_listing=true только если человек предлагает собственный объект "
         "или явно действует от имени собственника. Категории property_category: "
@@ -653,7 +673,7 @@ def save_owner_property_message(message, user_text, chat_id, sender_id):
             json={
                 "model": os.environ.get("MATVEY_MODEL", "gpt-4.1-mini"),
                 "instructions": extraction_prompt,
-                "input": (user_text or "")[:6000],
+                "input": extraction_input,
                 "text": {"format": {"type": "json_schema", "name": "owner_property_intake", "strict": True, "schema": schema}},
                 "max_output_tokens": 500,
             },
@@ -717,6 +737,50 @@ def save_owner_property_message(message, user_text, chat_id, sender_id):
             conn.commit()
     except Exception as exc:
         logging.error("Owner property intake storage failed: error_type=%s", type(exc).__name__)
+
+
+def get_owner_property_context(chat_id):
+    """Return the known owner listing facts for this chat so Matvey can skip answered questions."""
+    if not chat_id:
+        return ""
+    init_property_database()
+    with sqlite3.connect(MATVEY_DB_PATH, timeout=20) as conn:
+        row = conn.execute(
+            """SELECT deal_type, property_category, bedrooms, property_type_detail,
+                      address, area, community, price, currency, furnishing,
+                      availability, contact_phone, whatsapp_allowed, call_allowed,
+                      lease_end_date, contact_opt_in, photo_file_ids
+               FROM owner_properties WHERE chat_id=?""",
+            (str(chat_id),)
+        ).fetchone()
+    if not row:
+        return ""
+    labels = (
+        "Тип сделки", "Категория объекта", "Спальни", "Описание типа",
+        "Адрес", "Район", "Комьюнити", "Цена", "Валюта", "Меблировка",
+        "Доступность", "Телефон", "WhatsApp разрешён", "Звонок разрешён",
+        "Окончание договора", "Согласие на контакт", "ID фотографий"
+    )
+    known = []
+    for label, value in zip(labels, row):
+        if value is None or value == "":
+            continue
+        if label == "ID фотографий":
+            try:
+                value = f"получено: {len(json.loads(value or '[]'))} фото"
+            except (TypeError, ValueError):
+                value = "есть данные"
+        known.append(f"- {label}: {value}")
+    if not known:
+        return ""
+    return (
+        "АКТУАЛЬНАЯ КАРТОЧКА СОБСТВЕННИКА ИЗ БАЗЫ ДАННЫХ ЭТОГО ЧАТА. "
+        "Это уже известные факты — считай их подтверждёнными самим собеседником. "
+        "НЕ спрашивай их повторно и не проси подтвердить заново. "
+        "Перед следующим вопросом определи, какие поля уже заполнены, и спроси только "
+        "следующий действительно отсутствующий параметр по сценарию собственника.\n"
+        + "\n".join(known)
+    )
 
 
 def save_crm_contact(user_text, chat_id, sender_id):
@@ -1259,6 +1323,8 @@ def openai_answer(user_text, chat_id=None, is_admin=False):
             json={
                 "model": os.environ.get("MATVEY_MODEL", "gpt-4.1-mini"),
                 "instructions": SYSTEM_INSTRUCTIONS + OWNER_LISTING_SEARCH_INSTRUCTIONS + (
+                    (get_owner_property_context(key) + "\n\n") if key is not None and get_owner_property_context(key) else ""
+                ) + (
                     "\n\nРЕЖИМ РУКОВОДИТЕЛЯ АКТИВЕН: собеседник прошёл проверку Telegram user ID. Отвечай Артуру как руководителю компании: давай внутренние рабочие сводки и выполняй поиск объектов по поручению. Не применяй запрет на внутренние контакты к Артуру, если данные законно доступны и источник указан. Не заявляй о неподключённых источниках.\n"
                     if is_admin else "\n\nКЛИЕНТСКИЙ РЕЖИМ: не раскрывай непубличные внутренние базы, личные номера и закрытые данные. Но помогай искать публичные объявления и предоставляй опубликованные в них контакты собственников/агентов и прямые ссылки, если они реально доступны. Не отказывай автоматически в запросе контактов; если публичного контакта нет, честно объясни это и дай ссылку на источник.\n"
                 ),
@@ -1857,6 +1923,12 @@ def telegram():
                 "Добавьте OPENAI_API_KEY в Environment Variables на Render."
             )
         else:
+            # Extract and persist owner facts BEFORE generating the reply, so the model
+            # receives the current structured listing card and can skip answered questions.
+            try:
+                save_owner_property_message(message, conversation_text, chat_id, sender_id)
+            except Exception as exc:
+                logging.exception("Owner intake failed before reply generation: error_type=%s", type(exc).__name__)
             if message.get("voice") or message.get("audio"):
                 if not conversation_text:
                     answer = "Не удалось разобрать голосовое сообщение. Попробуйте записать его ещё раз."
@@ -1891,12 +1963,6 @@ def telegram():
                             conn.commit()
             except Exception as exc:
                 logging.exception("Photo metadata save failed; text reply was already sent: error_type=%s", type(exc).__name__)
-
-        if not is_admin or message.get("photo") or re.search(r"сдаю|сдать|сдается|сдаётся|продаю|продать|for rent|for sale", conversation_text, re.I):
-            try:
-                save_owner_property_message(message, conversation_text, chat_id, sender_id)
-            except Exception as exc:
-                logging.exception("Owner intake failed; text reply was already sent: error_type=%s", type(exc).__name__)
 
         if not is_admin and conversation_text:
             try:
