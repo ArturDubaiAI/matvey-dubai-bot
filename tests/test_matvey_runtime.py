@@ -128,6 +128,42 @@ class MatveyRuntimeTests(unittest.TestCase):
         self.assertIn("tomorrow after 15:00", context)
         self.assertIn("НЕ спрашивай их повторно", context)
 
+    def test_owner_listing_schema_has_delivery_and_photo_followup_tracking(self):
+        import sqlite3
+        with sqlite3.connect(main.MATVEY_DB_PATH) as conn:
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(owner_properties)")}
+        self.assertIn("lead_notification_status", columns)
+        self.assertIn("lead_notified_at", columns)
+        self.assertIn("photo_followup_1_due", columns)
+        self.assertIn("photo_followup_1_sent_at", columns)
+        self.assertIn("photo_followup_2_due", columns)
+        self.assertIn("photo_followup_2_sent_at", columns)
+        self.assertIn("photos_notification_sent_at", columns)
+
+    def test_owner_admin_summary_contains_listing_and_missing_photos_status(self):
+        import sqlite3
+        now = "2026-11-18T10:00:00+00:00"
+        with sqlite3.connect(main.MATVEY_DB_PATH) as conn:
+            conn.execute(
+                """INSERT INTO owner_properties (
+                    chat_id, deal_type, property_category, bedrooms, community,
+                    price, currency, furnishing, lease_term, payment_terms, deposit,
+                    contact_phone, whatsapp_allowed, call_allowed, contact_time,
+                    photo_file_ids, created_at, updated_at
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                ("lead-chat", "rent", "apartment", 1, "Dubai Marina", "95000", "AED",
+                 "fully furnished", "12 months", "4 cheques", "5%", "+971501234567",
+                 "yes", "yes", "tomorrow after 15:00", "[]", now, now)
+            )
+            conn.commit()
+            conn.row_factory = sqlite3.Row
+            row = conn.execute("SELECT * FROM owner_properties WHERE chat_id='lead-chat'").fetchone()
+        summary = main._owner_listing_admin_text(row)
+        self.assertIn("Dubai Marina", summary)
+        self.assertIn("95000 AED", summary)
+        self.assertIn("4 cheques", summary)
+        self.assertIn("Фотографии: ожидаются", summary)
+
     def test_multilingual_voice_and_dialogue_rules_are_present(self):
         self.assertIn("УНИВЕРСАЛЬНЫЙ ЯЗЫКОВОЙ РЕЖИМ", main.SYSTEM_INSTRUCTIONS)
         self.assertIn("ЕСТЕСТВЕННЫЙ ЧЕЛОВЕЧЕСКИЙ ДИАЛОГ", main.SYSTEM_INSTRUCTIONS)
