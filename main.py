@@ -2000,16 +2000,71 @@ def get_chat_lock(chat_id):
         return CHAT_LOCKS[key]
 
 
+def detect_message_language(user_text, fallback="ru"):
+    """Detect the language of the actual message/transcript, not Telegram UI settings."""
+    sample = (user_text or "").strip()
+    fallback_code = (fallback or "ru").lower().split("-")[0]
+    if not sample:
+        return fallback_code
+    # Script checks handle short messages more reliably than statistical detection.
+    if re.search(r"[А-Яа-яЁё]", sample):
+        return "ru"
+    if re.search(r"[\u0530-\u058F]", sample):
+        return "hy"
+    if re.search(r"[\u0600-\u06FF]", sample):
+        return "ar"
+    if re.search(r"[\u0900-\u097F]", sample):
+        return "hi"
+    try:
+        code = detect(sample[:1500]).lower().split("-")[0]
+        if code in {"ru", "en", "hy", "ar", "hi", "fr", "de", "es", "it", "pt", "tr", "zh", "ja", "ko"}:
+            return code
+    except LangDetectException:
+        pass
+    return fallback_code
+
+
+def localize_free_mode_reply(answer, language):
+    """Translate fixed free-mode prompts for supported languages without calling paid APIs."""
+    if language == "ru":
+        return answer
+    english = {
+        "Пожалуйста, напишите запрос текстом — бесплатный режим пока не обрабатывает голос.": "Please send your request as text. Voice transcription is not enabled in the current free mode.",
+        "Здравствуйте! Я Матвей, помощник Артура по недвижимости в Дубае. Вы хотите арендовать, купить, продать или сдать объект?": "Hello! I'm Matvey, Artur's Dubai real-estate assistant. Are you looking to rent, buy, sell, or rent out a property?",
+        "Хорошо, можем помочь сдать. Что именно вы сдаёте? (квартира, вилла, студия и т. д.)": "Of course, we can help rent it out. What type of property is it — an apartment, villa, studio, or something else?",
+        "В каком районе или комплексе находится объект?": "Which area or community is the property in?",
+        "Сколько вы хотите получать за аренду?": "What rental price are you asking?",
+        "Пришлите, пожалуйста, фотографии объекта и номер телефона для связи. Можно ли написать вам в WhatsApp или позвонить, и в какое время удобно?": "Please send the property photos and your phone number. May our agent contact you by WhatsApp or phone, and what time is convenient?",
+        "Спасибо, записал информацию. Если есть дополнительные условия аренды, напишите их сюда.": "Thank you, I've noted the details. Please send any other rental conditions here.",
+        "Что именно вы хотите продать?": "What type of property would you like to sell?",
+        "Какую цену вы хотите получить за объект?": "What price are you asking for the property?",
+        "Пришлите, пожалуйста, фотографии объекта и ваш номер телефона для связи.": "Please send the property photos and your phone number.",
+        "Спасибо, основные данные записал. Напишите, если есть дополнительные характеристики.": "Thank you, I've saved the main details. Please send any additional features.",
+        "В каком районе Дубая вы хотели бы арендовать?": "Which area of Dubai would you like to rent in?",
+        "Какой объект ищете и сколько нужно спален?": "What type of property are you looking for, and how many bedrooms do you need?",
+        "Какой у вас бюджет аренды и в какой валюте?": "What is your rental budget, and in which currency?",
+        "Когда планируете заселение?": "When are you planning to move in?",
+        "На какой срок планируете аренду?": "How long would you like to rent for?",
+        "Спасибо, записал ваши пожелания. Если есть ещё важные условия, добавьте их сообщением.": "Thank you, I've noted your requirements. Send any other important preferences in a message.",
+        "Какие районы Дубая рассматриваете?": "Which areas of Dubai are you considering?",
+        "Какой тип недвижимости и сколько спален вам нужно?": "What type of property do you need, and how many bedrooms?",
+        "Какой бюджет покупки вы рассматриваете (AED)?": "What is your purchase budget in AED?",
+        "Покупаете для себя или как инвестицию?": "Are you buying for yourself or as an investment?",
+        "Спасибо, записал ваш запрос. Можете дописать дополнительные пожелания.": "Thank you, I've saved your request. You can send any additional preferences.",
+        "Помогу с недвижимостью в Дубае. Вы ищете жильё для аренды, хотите купить, продать или сдать свой объект?": "I can help with Dubai real estate. Are you looking to rent, buy, sell, or rent out your property?",
+    }
+    return english.get(answer, answer)
+
+
 def free_mode_answer(user_text, chat_id, sender_id, is_admin=False, language_code="ru"):
     """Deterministic, no-OpenAI fallback for simple client intake. Stores dialogue locally."""
     text = (user_text or "").strip()
-    ru = (language_code or "ru").lower().startswith("ru")
+    language_code = detect_message_language(text, language_code)
+    ru = language_code == "ru"
     if not text:
-        return ("Пожалуйста, напишите запрос текстом — бесплатный режим пока не обрабатывает голос." if ru
-                else "Please send your request as text; free mode cannot transcribe voice yet.")
+        return localize_free_mode_reply("Пожалуйста, напишите запрос текстом — бесплатный режим пока не обрабатывает голос.", language_code)
     if re.match(r"^(?:привет|здравствуйте|добрый день|добрый вечер|hi|hello|hey)\b", text, re.I):
-        return ("Здравствуйте! Я Матвей, помощник Артура по недвижимости в Дубае. Вы хотите арендовать, купить, продать или сдать объект?"
-                if ru else "Hello! I'm Matvey, Artur's Dubai real-estate assistant. Are you looking to rent, buy, sell, or rent out a property?")
+        return localize_free_mode_reply("Здравствуйте! Я Матвей, помощник Артура по недвижимости в Дубае. Вы хотите арендовать, купить, продать или сдать объект?", language_code)
     init_property_database()
     key = str(chat_id)
     with sqlite3.connect(MATVEY_DB_PATH, timeout=20) as conn:
@@ -2150,7 +2205,7 @@ def free_mode_answer(user_text, chat_id, sender_id, is_admin=False, language_cod
                     telegram_send(admin_id, alert_text)
                 except Exception as notify_exc:
                     logging.warning("Free-mode lead notification failed: error_type=%s", type(notify_exc).__name__)
-    return answer
+    return localize_free_mode_reply(answer, language_code)
 
 
 def openai_answer(user_text, chat_id=None, is_admin=False):
@@ -2200,7 +2255,11 @@ def openai_answer(user_text, chat_id=None, is_admin=False):
             },
             json={
                 "model": MATVEY_DEFAULT_MODEL,
-                "instructions": SYSTEM_INSTRUCTIONS + BUYER_CLIENT_GUIDANCE + OWNER_LISTING_SEARCH_INSTRUCTIONS + (
+                "instructions": (
+                    "LANGUAGE RULE: Detect the language of the user's latest message (or voice transcript) and reply entirely in that same language. "
+                    "Do not use Telegram's interface language to choose the reply language. If the user switches languages, switch immediately. "
+                    "Preserve the language of the latest message even when earlier conversation history uses another language. "
+                ) + SYSTEM_INSTRUCTIONS + BUYER_CLIENT_GUIDANCE + OWNER_LISTING_SEARCH_INSTRUCTIONS + (
                     (owner_context + "\n\n") if owner_context else ""
                 ) + dialogue_guard + (
                     "\n\nРЕЖИМ РУКОВОДИТЕЛЯ АКТИВЕН: собеседник прошёл проверку Telegram user ID. Отвечай Артуру как руководителю компании: давай внутренние рабочие сводки и выполняй поиск объектов по поручению. Не заявляй о неподключённых источниках.\\n"
@@ -2802,8 +2861,18 @@ def telegram():
                 )
                 conn.commit()
         elif not OPENAI_API_KEY:
-            answer = free_mode_answer(incoming_text, chat_id, sender_id, is_admin=is_admin,
-                                     language_code=(message.get("from", {}).get("language_code") or "ru"))
+            # No speech-to-text provider is active in free mode; never pretend a voice note was understood.
+            if message.get("voice") or message.get("audio"):
+                detected_language = detect_message_language("", message.get("from", {}).get("language_code") or "ru")
+                answer = (
+                    "Голосовые сообщения пока не могу расшифровать. Напишите, пожалуйста, текстом."
+                    if detected_language == "ru" else
+                    "Voice messages cannot be transcribed while speech recognition is disabled. Please send a text message."
+                )
+            else:
+                detected_language = detect_message_language(incoming_text, message.get("from", {}).get("language_code") or "ru")
+                answer = free_mode_answer(incoming_text, chat_id, sender_id, is_admin=is_admin,
+                                          language_code=detected_language)
         else:
             # Extract and persist owner facts BEFORE generating the reply, so the model
             # receives the current structured listing card and can skip answered questions.
