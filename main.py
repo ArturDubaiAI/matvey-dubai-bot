@@ -1389,12 +1389,12 @@ def save_crm_contact(user_text, chat_id, sender_id):
             conn.commit()
         if kind == "client" and summary_changed:
             alert = (
-                "НОВАЯ/ОБНОВЛЁННАЯ ЗАЯВКА КЛИЕНТА\\n"
-                f"Имя: {record.get('name') or 'не указано'}\\n"
-                f"Телефон: {record.get('phone') or 'не указан'}\\n"
-                f"Telegram chat ID: {chat_id}\\n"
-                f"Язык: {record.get('language') or 'не указан'}\\n"
-                f"Запрос: {record.get('intent') or 'не указан'}\\n"
+                "НОВАЯ/ОБНОВЛЁННАЯ ЗАЯВКА КЛИЕНТА\n"
+                f"Имя: {record.get('name') or 'не указано'}\n"
+                f"Телефон: {record.get('phone') or 'не указан'}\n"
+                f"Telegram chat ID: {chat_id}\n"
+                f"Язык: {record.get('language') or 'не указан'}\n"
+                f"Запрос: {record.get('intent') or 'не указан'}\n"
                 f"Параметры: {new_summary}"
             )
             if not notify_owner_whatsapp(alert):
