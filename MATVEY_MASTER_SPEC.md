@@ -1,6 +1,6 @@
 # MATVEY — MASTER SPECIFICATION
-Version: 1.4
-Updated: 2026-11-16
+Version: 1.5
+Updated: 2026-11-18
 Repository: ArturDubaiAI/matvey-dubai-bot
 
 ## 1. Identity and greeting
@@ -161,3 +161,31 @@ Verified from repository source during review:
 - Preserve all existing language, lead qualification, concise response, voice, data security, source verification and no-fabrication requirements above.
 
 Completion rule: Arthur may begin delegating real search tasks only after the deployed bot has passed a live admin-command test and at least one real search test returning verified individual listings or a clear, honest no-results report. Telegram group lead monitoring is a separate activation gate and must be tested source by source.
+
+
+## 16. Senior Dubai real-estate GPT consultant (2026-11-18)
+
+The main Matvey assistant and child agents receive a dedicated Dubai real-estate expert instruction module in addition to the general system prompt. Default Responses API model is `gpt-6.2-sol`; the `MATVEY_MODEL` environment variable can override it. This is a model/configuration change, not proof of successful production activation until Render deployment and a live Telegram response are verified.
+
+The expert module covers:
+- Residential and commercial property, Dubai districts, ready/off-plan, owner, tenant, buyer, seller, agent and investor scenarios.
+- Comparative valuation, DLD transaction evidence vs portal asking prices, gross/net yield, full acquisition costs, vacancy, service charges, liquidity and risk.
+- Correct distinctions among DLD, RERA, Ejari, Title Deed, Oqood, Forms A/B/F, NOC, SPA, trustee offices, Mollak and Rental Disputes Center.
+- Dubai tenancy framework including Law 26 of 2007 as amended by Law 33 of 2008 and Decree 43 of 2013, subject to current-law verification.
+- Purchase/sale/off-plan, mortgage, escrow, ownership, transfer and transaction-cost checks.
+- Commercial-use, zoning, fit-out, civil-defence, food/health and building-approval checks.
+- Current-source requirements: official DLD/RERA, Dubai Legislation Portal, UAE legislation and other competent authorities first; current listings and market sources only as supplementary evidence.
+- Explicit separation of verified facts, asking prices, market estimates and calculation assumptions; no fabricated API access, listings, legal certainty or availability.
+
+Legal and regulatory answers must use web search where available, link the authoritative source, state the check date and explain that the answer is general information rather than legal advice. Current market values, yields, fees, rental increases and availability must be checked at answer time. The agent must not present an outdated remembered figure as current.
+
+Initial official reference set for knowledge grounding (the agent must still verify current versions on each relevant query):
+- Dubai Land Department: https://dubailand.gov.ae/
+- Dubai Legislation Portal: https://dlp.dubai.gov.ae/
+- Law No. 26 of 2007: https://dlp.dubai.gov.ae/Legislation%20Reference/2007/Law%20No.%20%2826%29%20of%202007.html
+- Law No. 33 of 2008: https://dlp.dubai.gov.ae/Legislation%20Reference/2009/Law%20No.%20%2833%29%20of%202008%20Amending%20Law%20No.%20%2826%29%20of%202007.html
+- Decree No. 43 of 2013: https://dlp.dubai.gov.ae/Legislation%20Reference/2013/Decree%20No.%20%2843%29%20of%202013%20Determining%20Rent%20Increase%20for%20Real%20Property.html
+- DLD Ejari service: https://dubailand.gov.ae/en/eservices/register-renew-ejari-contract/
+- DLD sale registration service: https://dubailand.gov.ae/en/eservices/property-sale-registration
+
+Release gate: unit tests must pass; Render must deploy the resulting commit; the Telegram bot must answer a live test about Form A/B/F and a current rental-law question with correct distinctions and official source links. Until those checks pass, describe the feature as committed but not yet live-verified.
