@@ -2,6 +2,7 @@ import os
 import inspect
 import tempfile
 import unittest
+import sqlite3
 
 import main
 
