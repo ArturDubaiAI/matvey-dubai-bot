@@ -1,4 +1,5 @@
 import io
+import hashlib
 import json
 import asyncio
 import tempfile
