@@ -603,9 +603,16 @@ def save_owner_property_message(message, user_text, chat_id, sender_id):
         history_row = conn.execute(
             "SELECT history_json FROM chat_conversations WHERE chat_id=?", (str(chat_id),)
         ).fetchone()
-        existing_owner = conn.execute(
-            "SELECT 1 FROM owner_properties WHERE chat_id=?", (str(chat_id),)
-        ).fetchone() is not None
+        existing_row = conn.execute(
+            "SELECT photo_file_ids FROM owner_properties WHERE chat_id=?", (str(chat_id),)
+        ).fetchone()
+        existing_owner = existing_row is not None
+        if existing_row:
+            try:
+                prior_photo_ids = json.loads(existing_row[0] or "[]")
+            except (TypeError, ValueError):
+                prior_photo_ids = []
+            photo_ids = list(dict.fromkeys(prior_photo_ids + photo_ids))
     try:
         prior_history = json.loads(history_row[0] or "[]") if history_row else []
     except (TypeError, ValueError):
