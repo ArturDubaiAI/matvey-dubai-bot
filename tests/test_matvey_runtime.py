@@ -106,6 +106,15 @@ class MatveyRuntimeTests(unittest.TestCase):
         self.assertNotIn("Не спрашивай цену раньше просьбы о фото и контакте", instructions)
 
 
+    def test_owner_motivation_is_detected_in_assistant_history(self):
+        self.assertTrue(main.owner_motivation_was_sent([
+            {"role": "assistant", "content": "Чем быстрее пришлёте фото, тем быстрее команда сможет представить объект заинтересованным клиентам."}
+        ]))
+        self.assertFalse(main.owner_motivation_was_sent([
+            {"role": "user", "content": "Чем быстрее пришлёте фото."},
+            {"role": "assistant", "content": "Спасибо, номер получил. Жду фотографии."}
+        ]))
+
     def test_owner_property_context_includes_known_facts_and_forbids_reasking(self):
         with __import__("sqlite3").connect(main.MATVEY_DB_PATH) as conn:
             conn.execute(
