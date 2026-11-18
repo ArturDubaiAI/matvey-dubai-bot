@@ -857,7 +857,7 @@ def _owner_listing_admin_text(row):
         ("Телефон", row["contact_phone"]), ("WhatsApp", row["whatsapp_allowed"]),
         ("Звонок", row["call_allowed"]), ("Время связи", row["contact_time"]),
     ]
-    lines = ["НОВАЯ ЗАЯВКА СОБСТВЕННИКА", f"Telegram chat ID: {row['chat_id']}"]
+    lines = ["НОВАЯ ЗАЯВКА СОБСТВЕННИКА"]
     lines.extend(f"{name}: {value}" for name, value in labels if value not in (None, ""))
     photos = []
     try:
@@ -947,7 +947,7 @@ def process_owner_listing_actions(chat_id):
         summary = _owner_listing_admin_text(row)
     if photo_ids:
         notice = ("ФОТОГРАФИИ ПОЛУЧЕНЫ\\n"
-                  f"Объект собственника (Telegram chat ID: {chat_id}). "
+                  "Объект собственника. "
                   f"Количество фото: {len(photo_ids)}. Карточка дополнена.")
         if not row["photos_notification_sent_at"] and notify_owner_whatsapp(notice):
             with sqlite3.connect(MATVEY_DB_PATH, timeout=30) as conn:
@@ -1396,7 +1396,7 @@ def save_crm_contact(user_text, chat_id, sender_id):
                 "НОВАЯ/ОБНОВЛЁННАЯ ЗАЯВКА КЛИЕНТА\n"
                 f"Имя: {record.get('name') or 'не указано'}\n"
                 f"Телефон: {record.get('phone') or 'не указан'}\n"
-                f"Telegram chat ID: {chat_id}\n"
+                ""
                 f"Язык: {record.get('language') or 'не указан'}\n"
                 f"Запрос: {record.get('intent') or 'не указан'}\n"
                 f"Параметры: {new_summary}"
