@@ -170,5 +170,125 @@ class MatveyRuntimeTests(unittest.TestCase):
         self.assertIn("ПОИСК КОНКРЕТНЫХ ОБЪЯВЛЕНИЙ", main.SYSTEM_INSTRUCTIONS)
 
 
+
+    def _insert_owner_listing_for_delivery_test(self, chat_id, deal_type):
+        import sqlite3
+        now = "2026-11-18T10:00:00+00:00"
+        with sqlite3.connect(main.MATVEY_DB_PATH) as conn:
+            conn.execute(
+                """INSERT INTO owner_properties (
+                    chat_id, deal_type, property_category, community, price, currency,
+                    lease_term, payment_terms, deposit, contact_phone, photo_file_ids,
+                    created_at, updated_at
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (chat_id, deal_type, "apartment", "Dubai Marina", "95000", "AED",
+                 None, None, None, None, "[]", now, now)
+            )
+            conn.commit()
+
+    def test_owner_rent_and_sale_leads_deliver_without_irrelevant_fields(self):
+        original_api = main.TELEGRAM_API
+        original_admins = main.ADMIN_TELEGRAM_IDS
+        original_send = main.telegram_send
+        sent = []
+        try:
+            main.TELEGRAM_API = "configured"
+            main.ADMIN_TELEGRAM_IDS = {"101", "202"}
+            main.telegram_send = lambda chat_id, text: sent.append((str(chat_id), text))
+            self._insert_owner_listing_for_delivery_test("rent-owner", "rent")
+            self._insert_owner_listing_for_delivery_test("sale-owner", "sale")
+            main.process_owner_listing_actions("rent-owner")
+            main.process_owner_listing_actions("sale-owner")
+            self.assertEqual({item[0] for item in sent}, {"101", "202"})
+            import sqlite3
+            with sqlite3.connect(main.MATVEY_DB_PATH) as conn:
+                rows = conn.execute(
+                    "SELECT chat_id, lead_notification_status, lead_notified_at FROM owner_properties "
+                    "WHERE chat_id IN ('rent-owner','sale-owner')"
+                ).fetchall()
+            self.assertEqual(len(rows), 2)
+            self.assertTrue(all(row[1] == "sent" and row[2] for row in rows))
+        finally:
+            main.TELEGRAM_API = original_api
+            main.ADMIN_TELEGRAM_IDS = original_admins
+            main.telegram_send = original_send
+
+    def test_owner_lead_retry_sends_only_to_admins_not_yet_notified(self):
+        original_api = main.TELEGRAM_API
+        original_admins = main.ADMIN_TELEGRAM_IDS
+        original_send = main.telegram_send
+        sent = []
+        fail_second = {"enabled": True}
+        def fake_send(chat_id, text):
+            sent.append(str(chat_id))
+            if str(chat_id) == "202" and fail_second["enabled"]:
+                raise RuntimeError("temporary Telegram failure")
+        try:
+            main.TELEGRAM_API = "configured"
+            main.ADMIN_TELEGRAM_IDS = {"101", "202"}
+            main.telegram_send = fake_send
+            self._insert_owner_listing_for_delivery_test("retry-owner", "sale")
+            main.process_owner_listing_actions("retry-owner")
+            import sqlite3, json
+            with sqlite3.connect(main.MATVEY_DB_PATH) as conn:
+                row = conn.execute(
+                    "SELECT lead_notification_status, lead_notified_admin_ids, lead_notified_at "
+                    "FROM owner_properties WHERE chat_id='retry-owner'"
+                ).fetchone()
+            self.assertEqual(row[0], "pending")
+            self.assertEqual(json.loads(row[1]), ["101"])
+            self.assertIsNone(row[2])
+            fail_second["enabled"] = False
+            main.process_owner_listing_actions("retry-owner")
+            with sqlite3.connect(main.MATVEY_DB_PATH) as conn:
+                row = conn.execute(
+                    "SELECT lead_notification_status, lead_notified_admin_ids, lead_notified_at "
+                    "FROM owner_properties WHERE chat_id='retry-owner'"
+                ).fetchone()
+            self.assertEqual(row[0], "sent")
+            self.assertEqual(json.loads(row[1]), ["101", "202"])
+            self.assertIsNotNone(row[2])
+            self.assertEqual(sent.count("101"), 1)
+            self.assertEqual(sent.count("202"), 2)
+        finally:
+            main.TELEGRAM_API = original_api
+            main.ADMIN_TELEGRAM_IDS = original_admins
+            main.telegram_send = original_send
+
+    def test_stale_photo_followup_claim_is_recovered(self):
+        original_api = main.TELEGRAM_API
+        original_send = main.telegram_send
+        sent = []
+        try:
+            main.TELEGRAM_API = "configured"
+            main.telegram_send = lambda chat_id, text: sent.append((str(chat_id), text))
+            import sqlite3
+            with sqlite3.connect(main.MATVEY_DB_PATH) as conn:
+                conn.execute(
+                    """INSERT INTO owner_properties (
+                        chat_id, photo_file_ids, photo_followup_1_due,
+                        photo_followup_1_sent_at, photo_followup_1_claimed_at,
+                        created_at, updated_at
+                    ) VALUES (?,?,?,?,?,?,?)""",
+                    ("photo-owner", "[]", "2000-01-01T00:00:00+00:00",
+                     "sending", "2000-01-01T00:00:00+00:00",
+                     "2000-01-01T00:00:00+00:00", "2000-01-01T00:00:00+00:00")
+                )
+                conn.commit()
+            main.process_due_photo_followups()
+            self.assertEqual(len(sent), 1)
+            self.assertIn("Наш клиент просит фотографии", sent[0][1])
+            with sqlite3.connect(main.MATVEY_DB_PATH) as conn:
+                row = conn.execute(
+                    "SELECT photo_followup_1_sent_at, photo_followup_1_claimed_at, "
+                    "photo_followup_2_due FROM owner_properties WHERE chat_id='photo-owner'"
+                ).fetchone()
+            self.assertNotEqual(row[0], "sending")
+            self.assertIsNone(row[1])
+            self.assertIsNotNone(row[2])
+        finally:
+            main.TELEGRAM_API = original_api
+            main.telegram_send = original_send
+
 if __name__ == "__main__":
     unittest.main()
