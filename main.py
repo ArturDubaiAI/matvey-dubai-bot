@@ -2024,8 +2024,8 @@ def openai_answer(user_text, chat_id=None, is_admin=False):
                 "instructions": SYSTEM_INSTRUCTIONS + BUYER_CLIENT_GUIDANCE + OWNER_LISTING_SEARCH_INSTRUCTIONS + (
                     (owner_context + "\n\n") if owner_context else ""
                 ) + dialogue_guard + (
-                    "\\n\\nРЕЖИМ РУКОВОДИТЕЛЯ АКТИВЕН: собеседник прошёл проверку Telegram user ID. Отвечай Артуру как руководителю компании: давай внутренние рабочие сводки и выполняй поиск объектов по поручению. Не заявляй о неподключённых источниках.\\n"
-                    if is_admin else "\\n\\n" + CLIENT_INTAKE_ONLY_POLICY + "\\n"
+                    "\n\nРЕЖИМ РУКОВОДИТЕЛЯ АКТИВЕН: собеседник прошёл проверку Telegram user ID. Отвечай Артуру как руководителю компании: давай внутренние рабочие сводки и выполняй поиск объектов по поручению. Не заявляй о неподключённых источниках.\\n"
+                    if is_admin else "\n\n" + CLIENT_INTAKE_ONLY_POLICY + "\n"
                 ),
                 "input": conversation_input,
                 "tools": [{"type": "web_search_preview"}] if is_admin else [],
