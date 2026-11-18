@@ -2009,11 +2009,11 @@ def detect_message_language(user_text, fallback="ru"):
     # Script checks handle short messages more reliably than statistical detection.
     if re.search(r"[А-Яа-яЁё]", sample):
         return "ru"
-    if re.search(r"[\\u0530-\\u058F]", sample):
+    if re.search(r"[\u0530-\u058F]", sample):
         return "hy"
-    if re.search(r"[\\u0600-\\u06FF]", sample):
+    if re.search(r"[\u0600-\u06FF]", sample):
         return "ar"
-    if re.search(r"[\\u0900-\\u097F]", sample):
+    if re.search(r"[\u0900-\u097F]", sample):
         return "hi"
     try:
         code = detect(sample[:1500]).lower().split("-")[0]
