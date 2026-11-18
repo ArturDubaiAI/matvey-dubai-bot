@@ -139,6 +139,43 @@ class MatveyRuntimeTests(unittest.TestCase):
         self.assertIn("photo_followup_2_due", columns)
         self.assertIn("photo_followup_2_sent_at", columns)
         self.assertIn("photos_notification_sent_at", columns)
+        self.assertIn("photo_ack_sent_at", columns)
+
+    def test_multiple_photo_messages_accumulate_and_acknowledge_only_once(self):
+        import json
+        import sqlite3
+        now = "2026-11-18T10:00:00+00:00"
+        with sqlite3.connect(main.MATVEY_DB_PATH) as conn:
+            conn.execute(
+                """INSERT INTO owner_properties (
+                    chat_id, deal_type, property_category, community, price,
+                    photo_file_ids, created_at, updated_at
+                ) VALUES (?,?,?,?,?,?,?,?)""",
+                ("photo-batch-owner", "rent", "apartment", "Dubai Marina",
+                 "95000", "[]", now, now)
+            )
+            conn.commit()
+
+        first_ack = main.store_owner_photos("photo-batch-owner", ["photo-1", "photo-2"])
+        second_ack = main.store_owner_photos("photo-batch-owner", ["photo-3"])
+        third_ack = main.store_owner_photos("photo-batch-owner", ["photo-4", "photo-5"])
+
+        self.assertTrue(first_ack)
+        self.assertFalse(second_ack)
+        self.assertFalse(third_ack)
+        with sqlite3.connect(main.MATVEY_DB_PATH) as conn:
+            row = conn.execute(
+                "SELECT photo_file_ids, photo_ack_sent_at FROM owner_properties "
+                "WHERE chat_id='photo-batch-owner'"
+            ).fetchone()
+        self.assertEqual(json.loads(row[0]), ["photo-1", "photo-2", "photo-3", "photo-4", "photo-5"])
+        self.assertTrue(row[1])
+
+    def test_photo_updates_do_not_trigger_voice_replies(self):
+        import inspect
+        source = inspect.getsource(main.telegram_webhook)
+        self.assertIn("if answer and not message.get(\"photo\"):", source)
+        self.assertIn("if message.get(\"photo\"):\n                answer = None", source)
 
     def test_owner_admin_summary_contains_listing_and_missing_photos_status(self):
         import sqlite3
