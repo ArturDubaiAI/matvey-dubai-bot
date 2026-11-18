@@ -438,7 +438,7 @@ class MatveyRuntimeTests(unittest.TestCase):
 
     def test_buyer_qualification_guidance_is_injected(self):
         guidance = main.BUYER_CLIENT_GUIDANCE.lower()
-        for phrase in ("один следующий", "бюджет", "ипотека", "инвестиционный", "не принимай цену примера",
+        for phrase in ("один следующий", "бюджет", "ипотека", "для инвестора", "не принимай цену примера",
                        "режим руководителя", "crm", "финансовые расчёты"):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, guidance)
