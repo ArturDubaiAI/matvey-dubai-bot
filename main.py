@@ -35,7 +35,7 @@ ADMIN_TELEGRAM_IDS = {value.strip() for value in os.environ.get("ADMIN_TELEGRAM_
 WEBHOOK_URL = "https://matvey-dubai-bot.onrender.com/telegram"
 TELEGRAM_API = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}" if TELEGRAM_TOKEN else None
 OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
-MATVEY_DEFAULT_MODEL = "gpt-6.2-sol"
+MATVEY_DEFAULT_MODEL = "gpt-6.2-astra"
 OPENAI_TRANSCRIPTIONS_URL = "https://api.openai.com/v1/audio/transcriptions"
 
 # Закреплённые параметры русского голоса Матвея. Не менять без прямой просьбы Артура.
