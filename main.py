@@ -2144,9 +2144,9 @@ def free_mode_answer(user_text, chat_id, sender_id, is_admin=False, language_cod
         conn.commit()
         if intent != "unknown" and not previous and ADMIN_TELEGRAM_IDS:
             alert_text = (
-                "Новая заявка в бесплатном режиме Матвея\\n"
-                f"Тип: {intent}\\n"
-                f"Параметры: {json.dumps(summary, ensure_ascii=False)}\\n"
+                "Новая заявка в бесплатном режиме Матвея\n"
+                f"Тип: {intent}\n"
+                f"Параметры: {json.dumps(summary, ensure_ascii=False)}\n"
                 f"Telegram chat ID: {chat_id}"
             )
             for admin_id in sorted(ADMIN_TELEGRAM_IDS):
