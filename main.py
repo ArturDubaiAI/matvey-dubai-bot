@@ -699,8 +699,12 @@ def save_owner_property_message(message, user_text, chat_id, sender_id):
                     if part.get("type") == "output_text":
                         extracted_text += part.get("text", "")
         record = json.loads(extracted_text)
-        if not record.get("is_owner_listing"):
+        if not record.get("is_owner_listing") and not existing_owner:
             return
+        # An existing owner card is authoritative even if the earliest owner-intent
+        # message has fallen outside the retained chat-history window.
+        if existing_owner:
+            record["is_owner_listing"] = True
         now = datetime.now(timezone.utc).isoformat()
         init_property_database()
         with sqlite3.connect(MATVEY_DB_PATH, timeout=20) as conn:
@@ -1296,7 +1300,7 @@ OWNER_LISTING_SEARCH_INSTRUCTIONS = """
 """
 
 
-MAX_HISTORY_MESSAGES = 16
+MAX_HISTORY_MESSAGES = 40
 
 
 def get_chat_lock(chat_id):
