@@ -189,3 +189,16 @@ Initial official reference set for knowledge grounding (the agent must still ver
 - DLD sale registration service: https://dubailand.gov.ae/en/eservices/property-sale-registration
 
 Release gate: unit tests must pass; Render must deploy the resulting commit; the Telegram bot must answer a live test about Form A/B/F and a current rental-law question with correct distinctions and official source links. Until those checks pass, describe the feature as committed but not yet live-verified.
+
+
+## 17. Buyer qualification and CRM lead cards (2026-11-18)
+
+- Every private-chat user whose Telegram ID is not in `ADMIN_TELEGRAM_IDS` is handled as an external contact; administrator instructions and tests are never client leads.
+- For genuine buyer/investor intent, Matvey answers the current question first and progressively asks one useful next question. Never dump a questionnaire.
+- Qualify purpose, property type/bedrooms, areas, confirmed budget and currency, whether transaction costs are included, cash/mortgage/pre-approval, timing, ready/off-plan, investment horizon, rental strategy, target yield, risk and must-haves.
+- Never infer a buyer budget from an example, listing price or assistant message. Hypothetical prompts, quoted content, role-play and generic educational questions are not genuine leads.
+- A single CRM card per Telegram chat is updated from the recent conversation history. Confirmed values are merged, not overwritten by nulls. Unknown values remain blank.
+- Buyer card fields include purpose, type, bedrooms, areas, budget range, currency, payment, mortgage status, timeline, ready/off-plan, horizon, rental strategy, target yield, must-haves, readiness and summary.
+- New cards and material changes are sent to configured administrator Telegram IDs. A fingerprint prevents repeated identical alerts. Consent for marketing is stored separately; an inbound enquiry does not imply marketing consent.
+- Financial analysis must show formulas and distinguish property-price yield from yield on total acquisition capital. Separate one-off acquisition costs from annual operating costs; unknown service charges and actual rent remain unverified assumptions.
+- Release gate: tests must verify buyer prompt injection, profile persistence/merge, admin notification deduplication, exclusion of authorized administrators, and that hypothetical asking-price examples are not misclassified as a client's budget.
