@@ -255,6 +255,43 @@ class MatveyRuntimeTests(unittest.TestCase):
             main.ADMIN_TELEGRAM_IDS = original_admins
             main.telegram_send = original_send
 
+    def test_photo_notification_retries_after_lead_was_already_delivered(self):
+        original_api = main.TELEGRAM_API
+        original_admins = main.ADMIN_TELEGRAM_IDS
+        original_send = main.telegram_send
+        sent = []
+        now = "2026-11-18T10:00:00+00:00"
+        try:
+            main.TELEGRAM_API = "configured"
+            main.ADMIN_TELEGRAM_IDS = {"101", "202"}
+            main.telegram_send = lambda chat_id, text: sent.append(str(chat_id))
+            with sqlite3.connect(main.MATVEY_DB_PATH) as conn:
+                conn.execute(
+                    """INSERT INTO owner_properties (
+                        chat_id, deal_type, property_category, community, price,
+                        photo_file_ids, lead_notification_status, lead_notified_at,
+                        lead_notified_admin_ids, photo_notified_admin_ids,
+                        created_at, updated_at
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    ("photo-retry-owner", "rent", "apartment", "Dubai Marina",
+                     "95000", '["telegram-photo-id"]', "sent", now,
+                     '["101","202"]', '["101"]', now, now)
+                )
+                conn.commit()
+            main.retry_pending_owner_photo_notifications()
+            self.assertEqual(sent, ["202"])
+            with sqlite3.connect(main.MATVEY_DB_PATH) as conn:
+                row = conn.execute(
+                    "SELECT photo_notified_admin_ids, photos_notification_sent_at "
+                    "FROM owner_properties WHERE chat_id='photo-retry-owner'"
+                ).fetchone()
+            self.assertEqual(json.loads(row[0]), ["101", "202"])
+            self.assertIsNotNone(row[1])
+        finally:
+            main.TELEGRAM_API = original_api
+            main.ADMIN_TELEGRAM_IDS = original_admins
+            main.telegram_send = original_send
+
     def test_stale_photo_followup_claim_is_recovered(self):
         original_api = main.TELEGRAM_API
         original_send = main.telegram_send
