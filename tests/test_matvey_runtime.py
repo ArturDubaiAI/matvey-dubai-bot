@@ -419,7 +419,7 @@ class MatveyRuntimeTests(unittest.TestCase):
                 self.assertIn(required.lower(), knowledge.lower())
 
     def test_matvey_defaults_to_current_gpt_consultant_model(self):
-        self.assertEqual(main.MATVEY_DEFAULT_MODEL, "gpt-6.2-sol")
+        self.assertEqual(main.MATVEY_DEFAULT_MODEL, "gpt-6.2-astra")
 
     def test_expert_instructions_require_current_sources_and_no_fake_integrations(self):
         knowledge = main.DUBAI_REAL_ESTATE_EXPERT_INSTRUCTIONS.lower()
