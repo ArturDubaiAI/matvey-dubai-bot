@@ -2006,7 +2006,7 @@ def free_mode_answer(user_text, chat_id, sender_id, is_admin=False, language_cod
     """Deterministic, no-OpenAI fallback for simple client intake. Stores dialogue locally."""
     text = (user_text or "").strip()
     ru = (language_code or "ru").lower().startswith("ru")
-    if not text:
+    if not text and not shared_phone:
         return ("Пожалуйста, напишите запрос текстом — бесплатный режим пока не обрабатывает голос." if ru
                 else "Please send your request as text; free mode cannot transcribe voice yet.")
     if re.match(r"^(?:привет|здравствуйте|добрый день|добрый вечер|hi|hello|hey)\b", text, re.I):
@@ -2066,6 +2066,7 @@ def free_mode_answer(user_text, chat_id, sender_id, is_admin=False, language_cod
             budget_match = re.search(r"\b([\d,\.]{3,})\b", lowered)
         if budget_match:
             fields["budget"] = budget_match.group(1).replace(",", "")
+        contact_was_complete = bool(fields.get("phone") and fields.get("whatsapp_allowed") in ("yes", "no"))
         if shared_phone:
             fields["phone"] = str(shared_phone).strip()
         else:
@@ -2133,7 +2134,6 @@ def free_mode_answer(user_text, chat_id, sender_id, is_admin=False, language_cod
         else:
             answer = ("Помогу с недвижимостью в Дубае. Вы ищете жильё для аренды, хотите купить, продать или сдать свой объект?"
                        if ru else "I can help with Dubai real estate. Are you looking to rent, buy, sell, or rent out a property?")
-        contact_was_complete = bool(fields.get("phone") and fields.get("whatsapp_allowed") in ("yes", "no"))
         if intent != "unknown" and not fields.get("phone"):
             answer = ("Пожалуйста, пришлите фотографии объекта и номер телефона. Нажмите кнопку ниже, чтобы поделиться контактом, или напишите номер вручную." if ru else "Please send property photos and your phone number. Tap below to share your contact, or type it manually.") if intent in ("owner_rent", "owner_sale") else ("Чтобы завершить заявку, пришлите ваш номер телефона. Нажмите кнопку ниже, чтобы поделиться контактом, или напишите номер вручную." if ru else "To complete your request, send your phone number. Tap below to share your contact, or type it manually.")
         elif intent != "unknown" and fields.get("phone") and fields.get("whatsapp_allowed") not in ("yes", "no"):
@@ -2674,7 +2674,7 @@ def telegram():
         # Continue processing rather than dropping a legitimate customer message.
 
     incoming_text = (message.get("text") or message.get("caption") or "").strip()
-    shared_contact_phone = (message.get("contact") or {}).get("phone_number"
+    shared_contact_phone = (message.get("contact") or {}).get("phone_number")"
     sender_id = str((message.get("from") or {}).get("id", ""))
     is_admin = bool(sender_id and sender_id in ADMIN_TELEGRAM_IDS)
 
@@ -2852,7 +2852,7 @@ def telegram():
                 markup = {"keyboard": [[{"text": "📱 Поделиться номером телефона", "request_contact": True}]], "resize_keyboard": True, "one_time_keyboard": True}
             elif "whatsapp" in answer.lower():
                 markup = {"keyboard": [[{"text": "Да"}, {"text": "Нет"}]], "resize_keyboard": True, "one_time_keyboard": True}
-            telegram_send(chat_id, answer, reply_markup=markup}
+            telegram_send(chat_id, answer, reply_markup=markup)
         # Telegram sends separate updates for separate photos. Store every image, but
         # acknowledge the photo batch only once and never generate a voice note for photos.
         if message.get("photo"):
