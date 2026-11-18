@@ -946,7 +946,13 @@ def process_owner_listing_actions(chat_id):
         notice = ("ФОТОГРАФИИ ПОЛУЧЕНЫ\\n"
                   f"Объект собственника (Telegram chat ID: {chat_id}). "
                   f"Количество фото: {len(photo_ids)}. Карточка дополнена.")
-        notify_owner_whatsapp(notice)
+        if not row["photos_notification_sent_at"] and notify_owner_whatsapp(notice):
+            with sqlite3.connect(MATVEY_DB_PATH, timeout=30) as conn:
+                conn.execute(
+                    "UPDATE owner_properties SET photos_notification_sent_at=COALESCE(photos_notification_sent_at, ?) WHERE chat_id=?",
+                    (datetime.now(timezone.utc).isoformat(), str(chat_id)),
+                )
+                conn.commit()
         for admin_id in admins:
             if admin_id in photo_delivered:
                 continue
