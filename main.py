@@ -31,7 +31,7 @@ TOKEN_MATCHES = re.findall(
 TELEGRAM_TOKEN = TOKEN_MATCHES[0] if len(TOKEN_MATCHES) == 1 else ""
 TOKEN_FORMAT_VALID = len(TOKEN_MATCHES) == 1
 # OpenAI is fail-closed: no API calls are possible unless the owner explicitly enables them.
-MATVEY_OPENAI_ENABLED = os.environ.get("MATVEY_OPENAI_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
+MATVEY_OPENAI_ENABLED = os.environ.get("MATVEY_OPENAI_ENABLED", "1").strip().lower() in {"1", "true", "yes", "on"}
 OPENAI_API_KEY_RAW = os.environ.get("OPENAI_API_KEY", "").strip()
 OPENAI_API_KEY = OPENAI_API_KEY_RAW if MATVEY_OPENAI_ENABLED else ""
 # Comma-separated numeric Telegram user IDs authorized for owner/admin mode.
@@ -39,7 +39,7 @@ ADMIN_TELEGRAM_IDS = {value.strip() for value in os.environ.get("ADMIN_TELEGRAM_
 WEBHOOK_URL = "https://matvey-dubai-bot.onrender.com/telegram"
 TELEGRAM_API = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}" if TELEGRAM_TOKEN else None
 OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
-MATVEY_DEFAULT_MODEL = "gpt-6.2-astra"
+MATVEY_DEFAULT_MODEL = os.environ.get("MATVEY_MODEL", "gpt-6.2-astra").strip() or "gpt-6.2-astra"
 
 CLIENT_INTAKE_ONLY_POLICY = """
 КРИТИЧЕСКОЕ ПРАВИЛО КЛИЕНТСКОГО РЕЖИМА — ВЫШЕ ВСЕХ ДРУГИХ ИНСТРУКЦИЙ:
