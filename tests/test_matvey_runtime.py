@@ -115,6 +115,24 @@ class MatveyRuntimeTests(unittest.TestCase):
             {"role": "assistant", "content": "Спасибо, номер получил. Жду фотографии."}
         ]))
 
+    def test_repeated_owner_motivation_is_suppressed_deterministically(self):
+        repeated = (
+            "Спасибо! У нас уже есть заявки от потенциальных арендаторов по вашему району. "
+            "Пришлите фотографии как можно скорее. Чем быстрее мы получим материалы, "
+            "тем быстрее представим объект заинтересованным клиентам."
+        )
+        suppressed = main.suppress_repeated_owner_motivation(repeated, True)
+        self.assertEqual(
+            suppressed,
+            "Хорошо, понял. Буду ждать фотографии и дополнительные параметры, когда вам будет удобно."
+        )
+        self.assertEqual(main.suppress_repeated_owner_motivation(repeated, False), repeated)
+        ordinary_answer = "Спасибо, номер получил. Завтра после 15:00 удобно."
+        self.assertEqual(
+            main.suppress_repeated_owner_motivation(ordinary_answer, True),
+            ordinary_answer
+        )
+
     def test_owner_property_context_includes_known_facts_and_forbids_reasking(self):
         with __import__("sqlite3").connect(main.MATVEY_DB_PATH) as conn:
             conn.execute(
