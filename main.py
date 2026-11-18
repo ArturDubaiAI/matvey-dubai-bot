@@ -904,12 +904,11 @@ def store_owner_photos(chat_id, photo_ids):
 
 def process_owner_listing_actions(chat_id):
     """Deliver owner leads to every configured admin and track each recipient separately."""
-    if not chat_id or not TELEGRAM_API:
+    if not chat_id:
         return
     admins = sorted(ADMIN_TELEGRAM_IDS)
     if not admins:
-        logging.error("Owner lead notification pending: ADMIN_TELEGRAM_IDS is empty")
-        return
+        logging.warning("Owner lead notification: no Telegram admins configured; WhatsApp delivery will still be attempted")
     init_property_database()
     now = datetime.now(timezone.utc)
     now_text = now.isoformat()
@@ -947,6 +946,7 @@ def process_owner_listing_actions(chat_id):
         notice = ("ФОТОГРАФИИ ПОЛУЧЕНЫ\\n"
                   f"Объект собственника (Telegram chat ID: {chat_id}). "
                   f"Количество фото: {len(photo_ids)}. Карточка дополнена.")
+        notify_owner_whatsapp(notice)
         for admin_id in admins:
             if admin_id in photo_delivered:
                 continue
@@ -985,7 +985,10 @@ def process_owner_listing_actions(chat_id):
                 conn.commit()
         except Exception as exc:
             failures.append((admin_id, type(exc).__name__))
-    all_delivered = all(admin_id in delivered for admin_id in admins)
+    whatsapp_sent = notify_owner_whatsapp(summary)
+    all_delivered = bool(whatsapp_sent)
+    if not whatsapp_sent:
+        logging.warning("Owner lead WhatsApp notification not delivered; check WhatsApp Cloud API configuration")
     with sqlite3.connect(MATVEY_DB_PATH, timeout=30) as conn:
         if all_delivered:
             conn.execute("""UPDATE owner_properties SET lead_notification_status='sent',
@@ -1530,8 +1533,7 @@ def save_buyer_lead_card(chat_id, sender_id):
                 try:
                     telegram_send(admin_id, alert)
                 except Exception as exc:
-                    sent = False
-                    logging.error("Buyer lead notification failed: %s", type(exc).__name__)
+                    logging.error("Buyer Telegram notification failed: %s", type(exc).__name__)
             if sent:
                 stored["admin_notified_fingerprint"] = fingerprint
                 with sqlite3.connect(MATVEY_DB_PATH, timeout=20) as conn:
