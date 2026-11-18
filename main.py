@@ -899,6 +899,27 @@ def process_owner_listing_actions(chat_id):
         logging.error("Owner lead notification incomplete: failures=%s", failures)
 
 
+def retry_pending_owner_photo_notifications():
+    """Retry photo-arrival notices independently of the owner lead's delivery status."""
+    if not TELEGRAM_API or not ADMIN_TELEGRAM_IDS:
+        return
+    init_property_database()
+    with sqlite3.connect(MATVEY_DB_PATH, timeout=30) as conn:
+        rows = conn.execute(
+            """SELECT chat_id, photo_notified_admin_ids FROM owner_properties
+               WHERE photo_file_ids IS NOT NULL
+                 AND photo_file_ids NOT IN ('', '[]')"""
+        ).fetchall()
+    configured_admins = set(ADMIN_TELEGRAM_IDS)
+    for chat_id, notified_json in rows:
+        try:
+            notified = set(json.loads(notified_json or "[]"))
+        except (TypeError, ValueError):
+            notified = set()
+        if not configured_admins.issubset(notified):
+            process_owner_listing_actions(chat_id)
+
+
 def process_due_photo_followups():
     """Send photo reminders and recover interrupted claims without losing the schedule."""
     if not TELEGRAM_API:
@@ -988,6 +1009,7 @@ def photo_followup_worker():
             if ADMIN_TELEGRAM_IDS:
                 for owner_chat_id in pending:
                     process_owner_listing_actions(owner_chat_id)
+                retry_pending_owner_photo_notifications()
             process_due_photo_followups()
         except Exception as exc:
             logging.error("Photo follow-up worker error: type=%s", type(exc).__name__)
