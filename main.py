@@ -2000,6 +2000,163 @@ def get_chat_lock(chat_id):
         return CHAT_LOCKS[key]
 
 
+def free_mode_answer(user_text, chat_id, sender_id, is_admin=False, language_code="ru"):
+    """Deterministic, no-OpenAI fallback for simple client intake. Stores dialogue locally."""
+    text = (user_text or "").strip()
+    ru = (language_code or "ru").lower().startswith("ru")
+    if is_admin:
+        return ("GPT отключён. Бесплатный режим работает: могу принимать заявки и вести простой диалог. "
+                "Для экспертного анализа и поиска GPT пока не используется.") if ru else (
+                "GPT is disabled. Free mode is active for basic intake. Advanced analysis/search is unavailable.")
+    if not text:
+        return ("Пожалуйста, напишите запрос текстом — бесплатный режим пока не обрабатывает голос." if ru
+                else "Please send your request as text; free mode cannot transcribe voice yet.")
+    if re.match(r"^(?:привет|здравствуйте|добрый день|добрый вечер|hi|hello|hey)\b", text, re.I):
+        return ("Здравствуйте! Я Матвей, помощник Артура по недвижимости в Дубае. Вы хотите арендовать, купить, продать или сдать объект?"
+                if ru else "Hello! I'm Matvey, Artur's Dubai real-estate assistant. Are you looking to rent, buy, sell, or rent out a property?")
+    init_property_database()
+    key = str(chat_id)
+    with sqlite3.connect(MATVEY_DB_PATH, timeout=20) as conn:
+        row = conn.execute("SELECT history_json FROM chat_conversations WHERE chat_id=?", (key,)).fetchone()
+        history = []
+        if row:
+            try:
+                history = json.loads(row[0] or "[]")
+            except (ValueError, TypeError):
+                history = []
+        if not isinstance(history, list):
+            history = []
+        previous = conn.execute("SELECT intent, requirements_json, contact_phone FROM client_leads WHERE chat_id=?", (key,)).fetchone()
+        try:
+            fields = json.loads(previous[1] or "{}") if previous else {}
+        except (ValueError, TypeError):
+            fields = {}
+        if not isinstance(fields, dict):
+            fields = {}
+        intent = (previous[0] if previous else None) or "unknown"
+        lowered = text.lower()
+        patterns = [
+            ("owner_rent", r"\b(?:сдаю|сдам|сда[её]тся|хочу сдавать|хочу сдать|rent\s+out|landlord)\b"),
+            ("owner_sale", r"\b(?:продаю|продам|хочу продать|for sale|selling my|sell my)\b"),
+            ("tenant_rent", r"\b(?:сниму|снять|ищу квартиру|ищу жиль[её]|арендовать|хочу арендовать|rent|for rent|looking for.*(?:rent|apartment))\b"),
+            ("buyer", r"\b(?:куплю|покупаю|хочу купить|покупка|buy|buying|looking to buy|invest)\b"),
+        ]
+        detected = next((name for name, pat in patterns if re.search(pat, lowered, re.I)), None)
+        if detected:
+            intent = detected
+        fields["intent"] = intent
+        # Capture basic fields from this message and prior conversation without AI.
+        areas = ("Dubai Marina","JBR","Downtown Dubai","Business Bay","Jumeirah","Palm Jumeirah",
+                 "Jumeirah Village Circle","JVC","Dubai Hills","Arjan","Al Barsha","International City",
+                 "Deira","Bur Dubai","Silicon Oasis","DIFC","Mirdif","Arabian Ranches","The Springs",
+                 "The Meadows","Bluewaters","City Walk","Motor City","Sports City","Discovery Gardens")
+        found_area = next((area for area in areas if area.lower() in lowered), None)
+        if found_area:
+            fields["area"] = found_area
+        types = {"studio":"студия", "студия":"студия", "apartment":"квартира", "квартир":"квартира",
+                 "villa":"вилла", "вилл":"вилла", "townhouse":"таунхаус", "таунхаус":"таунхаус",
+                 "office":"офис", "офис":"офис", "warehouse":"склад", "склад":"склад", "shop":"магазин",
+                 "магазин":"магазин", "room":"комната", "комнат":"комната"}
+        found_type = next((label for word, label in types.items() if word in lowered), None)
+        if found_type:
+            fields["property_type"] = found_type
+        bedroom_match = re.search(r"(\d+)\s*(?:спальн\w*|bedrooms?|br)\b", lowered, re.I)
+        if bedroom_match:
+            fields["bedrooms"] = bedroom_match.group(1)
+        budget_match = re.search(r"(?:aed|dh|дирхам\w*|budget|бюджет|до|from|up to)\s*[:=]?\s*([\d,\.]+)", lowered, re.I)
+        if not budget_match and re.search(r"(?:бюджет|budget|цена|price|сколько|how much)", (history[-1].get("content","") if history and isinstance(history[-1],dict) else ""), re.I):
+            budget_match = re.search(r"\b([\d,\.]{3,})\b", lowered)
+        if budget_match:
+            fields["budget"] = budget_match.group(1).replace(",", "")
+        if re.search(r"(?:\+?\d[\d ()-]{7,}\d)", text):
+            fields["phone"] = re.search(r"(?:\+?\d[\d ()-]{7,}\d)", text).group(0).strip()
+        if re.search(r"\b(?:today|сегодня|завтра|tomorrow|\d{1,2}[./-]\d{1,2})\b", lowered):
+            fields["move_date"] = text[:100]
+        # Progressive one-question prompts; only collected values are skipped.
+        if intent == "owner_rent":
+            if not fields.get("property_type"):
+                answer = "Хорошо, можем помочь сдать. Что именно вы сдаёте? (квартира, вилла, студия и т. д.)"
+            elif not fields.get("area"):
+                answer = "В каком районе или комплексе находится объект?"
+            elif not fields.get("price"):
+                fields["price"] = fields.get("budget")
+                answer = "Сколько вы хотите получать за аренду?"
+            elif not fields.get("photos_requested"):
+                fields["photos_requested"] = True
+                answer = "Пришлите, пожалуйста, фотографии объекта и номер телефона для связи. Можно ли написать вам в WhatsApp или позвонить, и в какое время удобно?"
+            else:
+                answer = "Спасибо, записал информацию. Если есть дополнительные условия аренды, напишите их сюда."
+        elif intent == "owner_sale":
+            if not fields.get("property_type"):
+                answer = "Что именно вы хотите продать?"
+            elif not fields.get("area"):
+                answer = "В каком районе или комплексе находится объект?"
+            elif not fields.get("price"):
+                fields["price"] = fields.get("budget")
+                answer = "Какую цену вы хотите получить за объект?"
+            elif not fields.get("photos_requested"):
+                fields["photos_requested"] = True
+                answer = "Пришлите, пожалуйста, фотографии объекта и ваш номер телефона для связи."
+            else:
+                answer = "Спасибо, основные данные записал. Напишите, если есть дополнительные характеристики."
+        elif intent == "tenant_rent":
+            if not fields.get("area"):
+                answer = "В каком районе Дубая вы хотели бы арендовать?"
+            elif not fields.get("property_type") or not fields.get("bedrooms"):
+                answer = "Какой объект ищете и сколько нужно спален?"
+            elif not fields.get("budget"):
+                answer = "Какой у вас бюджет аренды и в какой валюте?"
+            elif not fields.get("move_date"):
+                answer = "Когда планируете заселение?"
+            elif not fields.get("lease_term"):
+                answer = "На какой срок планируете аренду?"
+            else:
+                answer = "Спасибо, записал ваши пожелания. Если есть ещё важные условия, добавьте их сообщением."
+        elif intent == "buyer":
+            if not fields.get("area"):
+                answer = "Какие районы Дубая рассматриваете?"
+            elif not fields.get("property_type"):
+                answer = "Какой тип недвижимости и сколько спален вам нужно?"
+            elif not fields.get("budget"):
+                answer = "Какой бюджет покупки вы рассматриваете (AED)?"
+            elif not fields.get("purpose"):
+                answer = "Покупаете для себя или как инвестицию?"
+            else:
+                answer = "Спасибо, записал ваш запрос. Можете дописать дополнительные пожелания."
+        else:
+            answer = ("Помогу с недвижимостью в Дубае. Вы ищете жильё для аренды, хотите купить, продать или сдать свой объект?"
+                       if ru else "I can help with Dubai real estate. Are you looking to rent, buy, sell, or rent out a property?")
+        fields["last_message"] = text[:1000]
+        history.extend([{"role":"user","content":text[:4000]}, {"role":"assistant","content":answer}])
+        history = history[-MAX_HISTORY_MESSAGES:]
+        now = datetime.now(timezone.utc).isoformat()
+        conn.execute("""INSERT INTO chat_conversations (chat_id,history_json,updated_at) VALUES (?,?,?)
+            ON CONFLICT(chat_id) DO UPDATE SET history_json=excluded.history_json,updated_at=excluded.updated_at""",
+            (key,json.dumps(history,ensure_ascii=False),now))
+        if intent != "unknown":
+            summary = {k:v for k,v in fields.items() if k not in ("last_message","photos_requested")}
+            conn.execute("""INSERT INTO client_leads (chat_id,telegram_user_id,language,intent,requirements_json,
+                contact_phone,consent_status,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(chat_id) DO UPDATE SET intent=excluded.intent,requirements_json=excluded.requirements_json,
+                contact_phone=COALESCE(excluded.contact_phone,contact_phone),updated_at=excluded.updated_at""",
+                (key,str(sender_id or ""),language_code,intent,json.dumps(summary,ensure_ascii=False),
+                 fields.get("phone"),"unknown","new",now,now))
+        conn.commit()
+        if intent != "unknown" and not previous and ADMIN_TELEGRAM_IDS:
+            alert_text = (
+                "Новая заявка в бесплатном режиме Матвея\n"
+                f"Тип: {intent}\n"
+                f"Параметры: {json.dumps(summary, ensure_ascii=False)}\n"
+                f"Telegram chat ID: {chat_id}"
+            )
+            for admin_id in sorted(ADMIN_TELEGRAM_IDS):
+                try:
+                    telegram_send(admin_id, alert_text)
+                except Exception as notify_exc:
+                    logging.warning("Free-mode lead notification failed: error_type=%s", type(notify_exc).__name__)
+    return answer
+
+
 def openai_answer(user_text, chat_id=None, is_admin=False):
     if not OPENAI_API_KEY:
         return None
@@ -2649,10 +2806,8 @@ def telegram():
                 )
                 conn.commit()
         elif not OPENAI_API_KEY:
-            answer = (
-                "Telegram подключён, но AI-ключ пока не настроен. "
-                "Добавьте OPENAI_API_KEY в Environment Variables на Render."
-            )
+            answer = free_mode_answer(incoming_text, chat_id, sender_id, is_admin=is_admin,
+                                     language_code=(message.get("from", {}).get("language_code") or "ru"))
         else:
             # Extract and persist owner facts BEFORE generating the reply, so the model
             # receives the current structured listing card and can skip answered questions.
