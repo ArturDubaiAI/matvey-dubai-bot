@@ -102,7 +102,8 @@ class MatveyRuntimeTests(unittest.TestCase):
         self.assertLess(price, photos)
         self.assertLess(photos, contact)
         self.assertIn("удобное время для связи", section)
-        self.assertNotIn("Не спрашивай цену раньше просьбы о фото и контакте", section)
+        self.assertNotIn("Не проси фото и контакт раньше уточнения района и цены", section)
+        self.assertNotIn("Не спрашивай цену раньше просьбы о фото и контакте", instructions)
 
     def test_multilingual_voice_and_dialogue_rules_are_present(self):
         self.assertIn("УНИВЕРСАЛЬНЫЙ ЯЗЫКОВОЙ РЕЖИМ", main.SYSTEM_INSTRUCTIONS)
