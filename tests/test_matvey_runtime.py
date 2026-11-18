@@ -90,6 +90,20 @@ class MatveyRuntimeTests(unittest.TestCase):
             tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         self.assertIn("group_property_leads", tables)
 
+    def test_owner_intake_asks_area_price_before_photos_and_contact(self):
+        instructions = main.SYSTEM_INSTRUCTIONS
+        priority = instructions.index("ПРИОРИТЕТНЫЙ СЦЕНАРИЙ ДЛЯ СОБСТВЕННИКА")
+        section = instructions[priority:priority + 2600]
+        area = section.index("Уточни район")
+        price = section.index("После получения района спроси желаемую цену")
+        photos = section.index("ТОЛЬКО ПОСЛЕ ТОГО")
+        contact = section.index("номер телефона")
+        self.assertLess(area, price)
+        self.assertLess(price, photos)
+        self.assertLess(photos, contact)
+        self.assertIn("удобное время для связи", section)
+        self.assertNotIn("Не спрашивай цену раньше просьбы о фото и контакте", section)
+
     def test_multilingual_voice_and_dialogue_rules_are_present(self):
         self.assertIn("УНИВЕРСАЛЬНЫЙ ЯЗЫКОВОЙ РЕЖИМ", main.SYSTEM_INSTRUCTIONS)
         self.assertIn("ЕСТЕСТВЕННЫЙ ЧЕЛОВЕЧЕСКИЙ ДИАЛОГ", main.SYSTEM_INSTRUCTIONS)
