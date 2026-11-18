@@ -1760,11 +1760,10 @@ def openai_answer(user_text, chat_id=None, is_admin=False):
             raise RuntimeError("OpenAI returned no text output")
 
         answer = remove_generic_portal_urls(answer.strip())
-        if owner_context:
-            if motivation_already_sent:
-                answer = suppress_repeated_owner_motivation(answer, True)
-            elif owner_answer_contains_motivation(answer):
-                mark_owner_motivation_sent(key)
+        if motivation_already_sent:
+            answer = suppress_repeated_owner_motivation(answer, True)
+        elif owner_context and owner_answer_contains_motivation(answer):
+            mark_owner_motivation_sent(key)
         if key is not None:
             saved_history = (conversation_input + [
                 {"role": "assistant", "content": answer}
