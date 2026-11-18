@@ -434,5 +434,21 @@ class MatveyRuntimeTests(unittest.TestCase):
         self.assertIn("form b — соглашение покупателя", knowledge)
         self.assertIn("form f — унифицированный договор купли-продажи", knowledge)
 
+
+    def test_buyer_qualification_guidance_is_injected(self):
+        guidance = main.BUYER_CLIENT_GUIDANCE.lower()
+        for phrase in ("один следующий", "бюджет", "ипотека", "инвестиционный", "не принимай цену примера",
+                       "режим руководителя", "crm", "финансовые расчёты"):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, guidance)
+
+    def test_buyer_crm_card_and_admin_notification_path_exists(self):
+        self.assertTrue(callable(main.save_buyer_lead_card))
+        source = inspect.getsource(main.save_buyer_lead_card).lower()
+        for phrase in ("history_json", "buyer_profile", "admin_notified_fingerprint",
+                       "telegram_send", "consent_status", "budget_max_aed"):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, source)
+
 if __name__ == "__main__":
     unittest.main()
