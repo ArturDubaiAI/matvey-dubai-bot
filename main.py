@@ -1345,6 +1345,153 @@ def save_crm_contact(user_text, chat_id, sender_id):
         logging.error("CRM intake failed: error_type=%s", type(exc).__name__)
 
 
+
+def save_buyer_lead_card(chat_id, sender_id):
+    """Create/update one progressive buyer CRM card from an external user's full conversation."""
+    if not OPENAI_API_KEY or not chat_id:
+        return
+    init_property_database()
+    with sqlite3.connect(MATVEY_DB_PATH, timeout=20) as conn:
+        row = conn.execute("SELECT history_json FROM chat_conversations WHERE chat_id=?", (str(chat_id),)).fetchone()
+    if not row:
+        return
+    try:
+        history = json.loads(row[0] or "[]")
+    except (TypeError, ValueError):
+        return
+    if not isinstance(history, list):
+        return
+    dialogue = "\n".join(
+        f"{item.get('role', 'unknown')}: {str(item.get('content') or '')[:3000]}"
+        for item in history[-24:] if isinstance(item, dict)
+    )[-14000:]
+    if not re.search(r"куп|покуп|buy|purchase|invest|инвест|property|квартир|apartment|villa", dialogue, re.I):
+        return
+    fields = (
+        "purpose", "property_type", "bedrooms", "preferred_areas", "budget_min_aed",
+        "budget_max_aed", "budget_currency", "payment_method", "mortgage_status",
+        "timeline", "ready_or_offplan", "investment_horizon", "rental_strategy",
+        "target_yield", "must_haves", "readiness", "summary"
+    )
+    properties = {
+        "is_genuine_buyer_lead": {"type": "boolean"},
+        "language": {"type": ["string", "null"]}, "intent": {"type": ["string", "null"]},
+        "name": {"type": ["string", "null"]}, "phone": {"type": ["string", "null"]},
+        "telegram_username": {"type": ["string", "null"]},
+        "consent_status": {"type": "string", "enum": ["yes", "no", "unknown"]}
+    }
+    for key in fields:
+        properties[key] = {"type": ["string", "null"]}
+    schema = {"type": "object", "properties": properties,
+              "required": list(properties.keys()), "additionalProperties": False}
+    try:
+        response = requests.post(
+            OPENAI_RESPONSES_URL,
+            headers={"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"},
+            json={
+                "model": MATVEY_DEFAULT_MODEL,
+                "instructions": (
+                    "Extract only a genuine external user's buyer/investor intent from this dialogue. "
+                    "Assistant messages are not evidence. Ignore examples, hypotheticals, quoted prompts, "
+                    "tests and role-play. A sustained concrete discussion about buying/investing can be a "
+                    "lead; a generic one-off educational question is not. Never infer budget from an example "
+                    "or listing price. Unknown=null. Do not infer mortgage approval, identity or consent. "
+                    "Marketing consent yes requires explicit opt-in. Return strict JSON only."
+                ),
+                "input": dialogue,
+                "text": {"format": {"type": "json_schema", "name": "matvey_buyer_card", "strict": True, "schema": schema}},
+                "max_output_tokens": 550
+            },
+            timeout=30
+        )
+        response.raise_for_status()
+        payload = response.json()
+        raw = payload.get("output_text") or ""
+        if not raw:
+            for item in payload.get("output", []):
+                for part in item.get("content", []):
+                    if part.get("type") == "output_text":
+                        raw += part.get("text", "")
+        lead = json.loads(raw)
+        if not lead.get("is_genuine_buyer_lead"):
+            return
+        now = datetime.now(timezone.utc).isoformat()
+        with sqlite3.connect(MATVEY_DB_PATH, timeout=20) as conn:
+            old = conn.execute("SELECT requirements_json, contact_phone FROM client_leads WHERE chat_id=?",
+                               (str(chat_id),)).fetchone()
+            try:
+                stored = json.loads(old[0] or "{}") if old else {}
+            except (TypeError, ValueError):
+                stored = {}
+            if not isinstance(stored, dict):
+                stored = {}
+            prior = stored.get("buyer_profile") if isinstance(stored.get("buyer_profile"), dict) else {}
+            merged = dict(prior)
+            for key in fields:
+                if lead.get(key) not in (None, ""):
+                    merged[key] = lead[key]
+            stored["buyer_profile"] = merged
+            fingerprint = hashlib.sha256(json.dumps(
+                {"intent": lead.get("intent"), "profile": merged,
+                 "phone": lead.get("phone") or (old[1] if old else None)},
+                ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+            should_notify = stored.get("admin_notified_fingerprint") != fingerprint
+            conn.execute("""
+                INSERT INTO client_leads (chat_id, telegram_user_id, language, intent, requirements_json,
+                    contact_phone, consent_status, status, created_at, updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(chat_id) DO UPDATE SET
+                    telegram_user_id=excluded.telegram_user_id,
+                    language=COALESCE(excluded.language,language),
+                    intent=COALESCE(excluded.intent,intent),
+                    requirements_json=excluded.requirements_json,
+                    contact_phone=COALESCE(excluded.contact_phone,contact_phone),
+                    consent_status=CASE WHEN excluded.consent_status IN ('yes','no') THEN excluded.consent_status ELSE consent_status END,
+                    updated_at=excluded.updated_at
+            """, (str(chat_id), str(sender_id or ""), lead.get("language"), lead.get("intent"),
+                json.dumps(stored, ensure_ascii=False), lead.get("phone"), lead.get("consent_status") or "unknown",
+                "new", now, now))
+            conn.commit()
+        if should_notify and TELEGRAM_API and ADMIN_TELEGRAM_IDS:
+            labels = {
+                "purpose":"Цель", "property_type":"Тип объекта", "bedrooms":"Спальни",
+                "preferred_areas":"Районы", "budget_min_aed":"Бюджет от, AED",
+                "budget_max_aed":"Бюджет до, AED", "payment_method":"Оплата",
+                "mortgage_status":"Ипотека", "timeline":"Срок покупки",
+                "ready_or_offplan":"Ready/off-plan", "investment_horizon":"Горизонт",
+                "rental_strategy":"Стратегия аренды", "target_yield":"Целевая доходность",
+                "must_haves":"Пожелания", "readiness":"Готовность"
+            }
+            detail_lines = [f"• {label}: {merged[key]}" for key, label in labels.items()
+                            if merged.get(key) not in (None, "")]
+            alert = (
+                "НОВАЯ/ОБНОВЛЁННАЯ ЗАЯВКА ПОКУПАТЕЛЯ\n"
+                f"Имя: {lead.get('name') or 'не указано'}\n"
+                f"Телефон: {lead.get('phone') or 'не указан'}\n"
+                f"Telegram: @{lead.get('telegram_username') or 'не указан'}\n"
+                f"Язык: {lead.get('language') or 'не указан'}\n"
+                f"Запрос: {lead.get('intent') or 'покупка'}\n"
+                + ("\n".join(detail_lines) if detail_lines else "Параметры пока уточняются")
+                + f"\nСводка: {lead.get('summary') or '—'}\nChat ID: {chat_id}"
+                + "\nМаркетинговые сообщения — только при явном согласии."
+            )
+            sent = True
+            for admin_id in sorted(ADMIN_TELEGRAM_IDS):
+                try:
+                    telegram_send(admin_id, alert)
+                except Exception as exc:
+                    sent = False
+                    logging.error("Buyer lead notification failed: %s", type(exc).__name__)
+            if sent:
+                stored["admin_notified_fingerprint"] = fingerprint
+                with sqlite3.connect(MATVEY_DB_PATH, timeout=20) as conn:
+                    conn.execute("UPDATE client_leads SET requirements_json=?, updated_at=? WHERE chat_id=?",
+                        (json.dumps(stored, ensure_ascii=False), datetime.now(timezone.utc).isoformat(), str(chat_id)))
+                    conn.commit()
+    except Exception as exc:
+        logging.error("Buyer CRM extraction failed: error_type=%s", type(exc).__name__)
+
+
 SYSTEM_INSTRUCTIONS = (
     "ПРИОРИТЕТНЫЙ СЦЕНАРИЙ ДЛЯ СОБСТВЕННИКА — ВЫШЕ ВСЕХ ОСТАЛЬНЫХ ПРАВИЛ: Применяй только когда собеседник предлагает собственную недвижимость для сдачи или продажи. Соблюдай строгую последовательность и не перескакивай к контактам раньше времени: 1) Если тип объекта ещё неизвестен, спроси только: «Что именно вы хотите сдать?» или «Что именно вы хотите продать?». Если уже известно, что это квартира и сколько в ней спален, не переспрашивай. 2) Уточни район/комьюнити и, если уместно, название здания — только если они ещё неизвестны. 3) После получения района спроси желаемую цену: для аренды — «Сколько стоит аренда?», для продажи — «За сколько вы хотите продать объект?». 4) ТОЛЬКО ПОСЛЕ ТОГО, КАК УЖЕ ИЗВЕСТНЫ ТИП ОБЪЕКТА, РАЙОН И ЦЕНА, следующим вопросом попроси фотографии и контакт: «Пришлите, пожалуйста, фотографии объекта и номер телефона, по которому наша команда сможет с вами связаться. Можно ли написать вам в WhatsApp и позвонить? Укажите, пожалуйста, удобное время для связи». Фото, номер и согласие на WhatsApp/звонок запрашивай на этом этапе, не вторым вопросом и не раньше цены. Если какие-либо из этих данных уже предоставлены, не проси повторно, а уточни только недостающее. Не обещай звонить в любое время без согласования; ориентируйся на удобное для собственника время. 5) Затем уточняй по одному только действительно нужные неизвестные условия: срок аренды, доступность/дату освобождения, меблировку, условия оплаты и чеков, депозит и другие параметры. Для продажи уточняй сроки сделки, срочность, занятость объекта и возможность просмотра. ОДНОКРАТНАЯ МОТИВАЦИЯ СОБСТВЕННИКА: Когда собраны основные сведения об объекте и впервые запрашиваются фотографии/параметры, можно один раз мягко объяснить коммерческую пользу быстрой отправки материалов. Сообщи, что у команды есть обращения и потенциальные арендаторы по району (рабочая информация руководителя), и что фотографии помогут быстрее представить объект заинтересованным клиентам и согласовать возможный просмотр. Не обещай конкретного клиента, просмотр сегодня или гарантированную сдачу. ЭТО СООБЩЕНИЕ МОЖНО ОТПРАВИТЬ ТОЛЬКО ОДИН РАЗ ЗА ВЕСЬ ДИАЛОГ ПО ЭТОМУ ОБЪЕКТУ. После того как мотивация уже была отправлена, запрещено повторять её дословно или другими словами, повторно сообщать о спросе, торопить собственника или снова просить прислать фотографии/параметры в каждом ответе. На последующие сообщения отвечай строго по существу; если собственник говорит, что пришлёт фото позже, достаточно коротко ответить: «Хорошо, буду ждать. Спасибо». Не создавай дополнительные напоминания в обычных ответах. Отдельные автоматические напоминания через 5–6 часов и на следующий день допустимы только если фото ещё не поступили; прекрати их после получения фото. Собственнику категорически запрещено задавать любые вопросы о будущих жильцах или количестве проживающих. Не задавай собственнику вопросы из анкеты арендатора и не повторяй уже известные тип объекта, спальни, район, здание или цену. Если собственник не хочет давать фото или контакт, не дави и продолжай в Telegram. Не утверждай, что клиент найден или заявка передана, если это не подтверждено. Соблюдай этот порядок на всех языках. Собственнику категорически запрещено задавать любые вопросы о будущих жильцах или количестве проживающих: «Сколько человек обычно проживает?», «Сколько человек будет проживать?», «Сколько жильцов?», «Кто будет жить?» и любые перефразировки. Не задавай собственнику вопросы из анкеты арендатора. Не спрашивай повторно уже известные тип объекта, спальни, район или здание. Не проси фото и контакт раньше уточнения района и цены. Если собственник не хочет давать фото или номер, не дави и продолжай в Telegram. Не утверждай, что клиент найден или заявка передана, если это не подтверждено. Запрет на вопросы о количестве жильцов действует абсолютно для всех собеседников — арендаторов, покупателей, собственников и агентов; не задавай такие вопросы ни в каком сценарии. Соблюдай этот порядок на всех языках. "
     "СТИЛЬ ОБЩЕНИЯ — КРИТИЧЕСКИ ВАЖНО: Отвечай ясно и по делу, но не загоняй себя в лимит слов: для простого вопроса достаточно 1–3 предложений, для сложного объясняй нормально и естественно. Задавай только один короткий вопрос за раз. Не пиши длинные вступления, повторения, лекции, списки на много пунктов, канцелярит, стихи, рифмы, пафос и лишние объяснения. Не пересказывай клиенту всю его заявку. Давай только нужную информацию и следующий шаг. Если пользователь просит подробности — тогда раскрой тему ровно настолько, насколько нужно. Голосовые ответы делай такими же короткими: озвучивай только краткий ответ, без длинных пояснений и повторов; обычно до 10–15 секунд. Не растягивай голосовое ради заполнения времени. Сохраняй точность и важные условия даже при краткости. Это правило действует на русском и английском языках и для всех типов собеседников. " 
@@ -2487,6 +2634,7 @@ def telegram():
         if not is_admin and conversation_text:
             try:
                 save_crm_contact(conversation_text, chat_id, sender_id)
+                save_buyer_lead_card(chat_id, sender_id)
             except Exception as exc:
                 logging.exception("CRM intake failed; text reply was already sent: error_type=%s", type(exc).__name__)
 
