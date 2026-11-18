@@ -105,6 +105,24 @@ class MatveyRuntimeTests(unittest.TestCase):
         self.assertNotIn("Не проси фото и контакт раньше уточнения района и цены", section)
         self.assertNotIn("Не спрашивай цену раньше просьбы о фото и контакте", instructions)
 
+
+    def test_owner_property_context_includes_known_facts_and_forbids_reasking(self):
+        with __import__("sqlite3").connect(main.MATVEY_DB_PATH) as conn:
+            conn.execute(
+                """INSERT INTO owner_properties (
+                    chat_id, deal_type, property_category, bedrooms, area, community,
+                    price, currency, furnishing, availability, created_at, updated_at
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                ("owner-chat", "rent", "apartment", 1, "Dubai Marina", "Dubai Marina",
+                 "95000", "AED", "fully furnished", "available now", "now", "now")
+            )
+            conn.commit()
+        context = main.get_owner_property_context("owner-chat")
+        self.assertIn("Dubai Marina", context)
+        self.assertIn("95000", context)
+        self.assertIn("fully furnished", context)
+        self.assertIn("НЕ спрашивай их повторно", context)
+
     def test_multilingual_voice_and_dialogue_rules_are_present(self):
         self.assertIn("УНИВЕРСАЛЬНЫЙ ЯЗЫКОВОЙ РЕЖИМ", main.SYSTEM_INSTRUCTIONS)
         self.assertIn("ЕСТЕСТВЕННЫЙ ЧЕЛОВЕЧЕСКИЙ ДИАЛОГ", main.SYSTEM_INSTRUCTIONS)
