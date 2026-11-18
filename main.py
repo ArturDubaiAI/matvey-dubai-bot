@@ -129,7 +129,12 @@ def init_property_database():
             "photo_followup_2_due": "TEXT",
             "photo_followup_2_sent_at": "TEXT",
             "photo_received_at": "TEXT",
-            "photos_notification_sent_at": "TEXT"
+            "photos_notification_sent_at": "TEXT",
+            "lead_notified_admin_ids": "TEXT NOT NULL DEFAULT '[]'",
+            "photo_notified_admin_ids": "TEXT NOT NULL DEFAULT '[]'",
+            "lead_notification_claimed_at": "TEXT",
+            "photo_followup_1_claimed_at": "TEXT",
+            "photo_followup_2_claimed_at": "TEXT"
         }
         for column, definition in migrations.items():
             if column not in existing_columns:
@@ -791,10 +796,16 @@ def _owner_listing_admin_text(row):
 
 
 def process_owner_listing_actions(chat_id):
-    """Deliver a completed owner lead to admins once and schedule photo reminders."""
+    """Deliver owner leads to every configured admin and track each recipient separately."""
     if not chat_id or not TELEGRAM_API:
         return
+    admins = sorted(ADMIN_TELEGRAM_IDS)
+    if not admins:
+        logging.error("Owner lead notification pending: ADMIN_TELEGRAM_IDS is empty")
+        return
     init_property_database()
+    now = datetime.now(timezone.utc)
+    now_text = now.isoformat()
     with sqlite3.connect(MATVEY_DB_PATH, timeout=30) as conn:
         conn.row_factory = sqlite3.Row
         row = conn.execute("SELECT * FROM owner_properties WHERE chat_id=?", (str(chat_id),)).fetchone()
@@ -804,136 +815,148 @@ def process_owner_listing_actions(chat_id):
             photo_ids = json.loads(row["photo_file_ids"] or "[]")
         except (TypeError, ValueError):
             photo_ids = []
-        complete = all([
-            row["deal_type"], row["property_category"], row["price"],
-            row["community"] or row["area"], row["contact_phone"],
-            row["lease_term"], row["payment_terms"], row["deposit"]
-        ])
+        deal_type = (row["deal_type"] or "").strip().lower()
+        complete = bool(deal_type in ("rent", "sale") and row["property_category"]
+                        and row["price"] and (row["community"] or row["area"]))
         if not complete:
             return
-        now = datetime.now(timezone.utc)
         if not photo_ids and row["photo_followup_1_due"] is None and row["photo_followup_1_sent_at"] is None:
-            conn.execute(
-                "UPDATE owner_properties SET photo_followup_1_due=?, photo_followup_2_due=NULL WHERE chat_id=?",
-                ((now + timedelta(hours=5, minutes=30)).isoformat(), str(chat_id))
-            )
-        if photo_ids and row["photo_received_at"] is None and ADMIN_TELEGRAM_IDS:
-            photo_notice = (
-                "ФОТОГРАФИИ ПОЛУЧЕНЫ\n"
-                f"Объект собственника (Telegram chat ID: {row['chat_id']}). "
-                f"Количество фото: {len(photo_ids)}. Карточка дополнена."
-            )
-            try:
-                for admin_id in sorted(ADMIN_TELEGRAM_IDS):
-                    telegram_send(admin_id, photo_notice)
-                conn.execute(
-                    "UPDATE owner_properties SET photo_received_at=?, photos_notification_sent_at=? WHERE chat_id=?",
-                    (now.isoformat(), now.isoformat(), str(chat_id))
-                )
-                conn.commit()
-            except Exception as exc:
-                logging.error("Photo receipt admin notification failed: type=%s", type(exc).__name__)
-        if row["lead_notified_at"]:
-            return
-        if not ADMIN_TELEGRAM_IDS:
-            logging.error("Owner lead notification pending: ADMIN_TELEGRAM_IDS is empty")
-            return
-        claim = conn.execute(
-            """UPDATE owner_properties SET lead_notification_status='sending'
-               WHERE chat_id=? AND lead_notified_at IS NULL
-               AND COALESCE(lead_notification_status,'pending')!='sending'""",
-            (str(chat_id),)
-        )
-        conn.commit()
-        if claim.rowcount != 1:
-            return
-        message_text = _owner_listing_admin_text(row)
-    delivered = []
-    failures = []
-    for admin_id in sorted(ADMIN_TELEGRAM_IDS):
+            conn.execute("UPDATE owner_properties SET photo_followup_1_due=? WHERE chat_id=?",
+                         ((now + timedelta(hours=5, minutes=30)).isoformat(), str(chat_id)))
+        if photo_ids and row["photo_received_at"] is None:
+            conn.execute("UPDATE owner_properties SET photo_received_at=? WHERE chat_id=?",
+                         (now_text, str(chat_id)))
         try:
-            telegram_send(admin_id, message_text)
-            delivered.append(admin_id)
-        except Exception as exc:
-            failures.append(type(exc).__name__)
+            delivered = set(json.loads(row["lead_notified_admin_ids"] or "[]"))
+        except (TypeError, ValueError):
+            delivered = set()
+        try:
+            photo_delivered = set(json.loads(row["photo_notified_admin_ids"] or "[]"))
+        except (TypeError, ValueError):
+            photo_delivered = set()
+        conn.commit()
+        summary = _owner_listing_admin_text(row)
+    if photo_ids:
+        notice = ("ФОТОГРАФИИ ПОЛУЧЕНЫ\\n"
+                  f"Объект собственника (Telegram chat ID: {chat_id}). "
+                  f"Количество фото: {len(photo_ids)}. Карточка дополнена.")
+        for admin_id in admins:
+            if admin_id in photo_delivered:
+                continue
+            try:
+                telegram_send(admin_id, notice)
+                photo_delivered.add(admin_id)
+                with sqlite3.connect(MATVEY_DB_PATH, timeout=30) as conn:
+                    conn.execute("UPDATE owner_properties SET photo_notified_admin_ids=? WHERE chat_id=?",
+                                 (json.dumps(sorted(photo_delivered)), str(chat_id)))
+                    if all(a in photo_delivered for a in admins):
+                        conn.execute("UPDATE owner_properties SET photos_notification_sent_at=? WHERE chat_id=?",
+                                     (datetime.now(timezone.utc).isoformat(), str(chat_id)))
+                    conn.commit()
+            except Exception as exc:
+                logging.error("Photo receipt admin notification failed: admin=%s type=%s",
+                              admin_id, type(exc).__name__)
     with sqlite3.connect(MATVEY_DB_PATH, timeout=30) as conn:
-        if delivered:
-            conn.execute(
-                "UPDATE owner_properties SET lead_notification_status='sent', lead_notified_at=? WHERE chat_id=?",
-                (datetime.now(timezone.utc).isoformat(), str(chat_id))
-            )
+        claim = conn.execute(
+            """UPDATE owner_properties SET lead_notification_status='sending',
+               lead_notification_claimed_at=? WHERE chat_id=? AND lead_notified_at IS NULL
+               AND COALESCE(lead_notification_status,'pending')!='sending'""",
+            (now_text, str(chat_id)))
+        conn.commit()
+    if claim.rowcount != 1:
+        return
+    failures = []
+    for admin_id in admins:
+        if admin_id in delivered:
+            continue
+        try:
+            telegram_send(admin_id, summary)
+            delivered.add(admin_id)
+            with sqlite3.connect(MATVEY_DB_PATH, timeout=30) as conn:
+                conn.execute("UPDATE owner_properties SET lead_notified_admin_ids=? WHERE chat_id=?",
+                             (json.dumps(sorted(delivered)), str(chat_id)))
+                conn.commit()
+        except Exception as exc:
+            failures.append((admin_id, type(exc).__name__))
+    all_delivered = all(admin_id in delivered for admin_id in admins)
+    with sqlite3.connect(MATVEY_DB_PATH, timeout=30) as conn:
+        if all_delivered:
+            conn.execute("""UPDATE owner_properties SET lead_notification_status='sent',
+                         lead_notified_at=?, lead_notification_claimed_at=NULL WHERE chat_id=?""",
+                         (datetime.now(timezone.utc).isoformat(), str(chat_id)))
         else:
-            conn.execute(
-                "UPDATE owner_properties SET lead_notification_status='pending' WHERE chat_id=?",
-                (str(chat_id),)
-            )
+            conn.execute("""UPDATE owner_properties SET lead_notification_status='pending',
+                         lead_notification_claimed_at=NULL WHERE chat_id=?""", (str(chat_id),))
         conn.commit()
     if failures:
-        logging.error("Owner lead notification partially failed: delivered=%s failures=%s", len(delivered), failures)
+        logging.error("Owner lead notification incomplete: failures=%s", failures)
 
 
 def process_due_photo_followups():
-    """Send Telegram photo reminders after 5.5 hours and again the following day."""
+    """Send photo reminders and recover interrupted claims without losing the schedule."""
     if not TELEGRAM_API:
         return
     init_property_database()
     now = datetime.now(timezone.utc)
     now_text = now.isoformat()
+    stale_before = (now - timedelta(minutes=10)).isoformat()
     with sqlite3.connect(MATVEY_DB_PATH, timeout=30) as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             """SELECT chat_id, photo_file_ids, photo_followup_1_due, photo_followup_1_sent_at,
-                      photo_followup_2_due, photo_followup_2_sent_at, language
+                      photo_followup_2_due, photo_followup_2_sent_at,
+                      photo_followup_1_claimed_at, photo_followup_2_claimed_at
                FROM owner_properties
                WHERE photo_file_ids IS NULL OR photo_file_ids='' OR photo_file_ids='[]'"""
         ).fetchall()
     for row in rows:
         stage = None
-        due = None
-        if row["photo_followup_1_due"] and not row["photo_followup_1_sent_at"] and row["photo_followup_1_due"] <= now_text:
-            stage, due = 1, row["photo_followup_1_due"]
-        elif row["photo_followup_1_sent_at"] and row["photo_followup_2_due"] and not row["photo_followup_2_sent_at"] and row["photo_followup_2_due"] <= now_text:
-            stage, due = 2, row["photo_followup_2_due"]
+        first_claim_stale = row["photo_followup_1_sent_at"] == "sending" and (
+            not row["photo_followup_1_claimed_at"] or row["photo_followup_1_claimed_at"] <= stale_before)
+        second_claim_stale = row["photo_followup_2_sent_at"] == "sending" and (
+            not row["photo_followup_2_claimed_at"] or row["photo_followup_2_claimed_at"] <= stale_before)
+        if row["photo_followup_1_due"] and (
+            not row["photo_followup_1_sent_at"] or first_claim_stale) and row["photo_followup_1_due"] <= now_text:
+            stage = 1
+        elif row["photo_followup_1_sent_at"] not in (None, "", "sending") and row["photo_followup_2_due"] and (
+            not row["photo_followup_2_sent_at"] or second_claim_stale) and row["photo_followup_2_due"] <= now_text:
+            stage = 2
         if not stage:
             continue
-        claim_column = "photo_followup_1_sent_at" if stage == 1 else "photo_followup_2_sent_at"
+        claim_col = "photo_followup_1_sent_at" if stage == 1 else "photo_followup_2_sent_at"
+        claimed_col = "photo_followup_1_claimed_at" if stage == 1 else "photo_followup_2_claimed_at"
         with sqlite3.connect(MATVEY_DB_PATH, timeout=30) as conn:
             cur = conn.execute(
-                f"UPDATE owner_properties SET {claim_column}='sending' WHERE chat_id=? AND {claim_column} IS NULL",
-                (row["chat_id"],)
-            )
+                f"""UPDATE owner_properties SET {claim_col}='sending', {claimed_col}=?
+                    WHERE chat_id=? AND ({claim_col} IS NULL OR
+                    ({claim_col}='sending' AND ({claimed_col} IS NULL OR {claimed_col}<=?)))""",
+                (now_text, row["chat_id"], stale_before))
             conn.commit()
         if cur.rowcount != 1:
             continue
-        reminder = (
-            "Наш клиент просит фотографии вашего объекта. Не могли бы вы, пожалуйста, прислать фотографии квартиры?"
-            if stage == 1 else
-            "Напоминаю о фотографиях квартиры: наш клиент всё ещё ожидает их. Не могли бы вы прислать фотографии, когда вам будет удобно?"
-        )
+        reminder = ("Наш клиент просит фотографии вашего объекта. Не могли бы вы прислать фотографии?"
+                    if stage == 1 else
+                    "Напоминаю: наш клиент всё ещё ожидает фотографии вашего объекта. Не могли бы вы прислать их, когда вам будет удобно?")
         try:
             telegram_send(row["chat_id"], reminder)
             sent_at = datetime.now(timezone.utc)
             with sqlite3.connect(MATVEY_DB_PATH, timeout=30) as conn:
                 if stage == 1:
                     conn.execute(
-                        "UPDATE owner_properties SET photo_followup_1_sent_at=?, photo_followup_2_due=? WHERE chat_id=?",
-                        (sent_at.isoformat(), (sent_at + timedelta(days=1)).isoformat(), row["chat_id"])
-                    )
+                        """UPDATE owner_properties SET photo_followup_1_sent_at=?,
+                           photo_followup_1_claimed_at=NULL, photo_followup_2_due=? WHERE chat_id=?""",
+                        (sent_at.isoformat(), (sent_at + timedelta(days=1)).isoformat(), row["chat_id"]))
                 else:
                     conn.execute(
-                        "UPDATE owner_properties SET photo_followup_2_sent_at=? WHERE chat_id=?",
-                        (sent_at.isoformat(), row["chat_id"])
-                    )
+                        f"UPDATE owner_properties SET {claim_col}=?, {claimed_col}=NULL WHERE chat_id=?",
+                        (sent_at.isoformat(), row["chat_id"]))
                 conn.commit()
         except Exception as exc:
             retry_at = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()
             with sqlite3.connect(MATVEY_DB_PATH, timeout=30) as conn:
-                conn.execute(
-                    f"UPDATE owner_properties SET {claim_column}=NULL, "
-                    + ("photo_followup_1_due=?" if stage == 1 else "photo_followup_2_due=?")
-                    + " WHERE chat_id=?",
-                    (retry_at, row["chat_id"])
-                )
+                conn.execute(f"UPDATE owner_properties SET {claim_col}=NULL, {claimed_col}=NULL, "
+                             + ("photo_followup_1_due=?" if stage == 1 else "photo_followup_2_due=?")
+                             + " WHERE chat_id=?", (retry_at, row["chat_id"]))
                 conn.commit()
             logging.error("Photo follow-up failed: stage=%s error_type=%s", stage, type(exc).__name__)
 
@@ -942,13 +965,20 @@ def photo_followup_worker():
     """Retry pending admin delivery and send due photo reminders in the background."""
     while True:
         try:
+            init_property_database()
+            stale_before = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+            with sqlite3.connect(MATVEY_DB_PATH, timeout=30) as conn:
+                conn.execute(
+                    """UPDATE owner_properties SET lead_notification_status='pending',
+                       lead_notification_claimed_at=NULL
+                       WHERE lead_notified_at IS NULL AND lead_notification_status='sending'
+                       AND (lead_notification_claimed_at IS NULL OR lead_notification_claimed_at<=?)""",
+                    (stale_before,))
+                conn.commit()
+                pending = [row[0] for row in conn.execute(
+                    "SELECT chat_id FROM owner_properties WHERE lead_notified_at IS NULL "
+                    "AND COALESCE(lead_notification_status,'pending')='pending'").fetchall()]
             if ADMIN_TELEGRAM_IDS:
-                init_property_database()
-                with sqlite3.connect(MATVEY_DB_PATH, timeout=30) as conn:
-                    pending = [row[0] for row in conn.execute(
-                        "SELECT chat_id FROM owner_properties WHERE lead_notified_at IS NULL "
-                        "AND COALESCE(lead_notification_status,'pending')='pending'"
-                    ).fetchall()]
                 for owner_chat_id in pending:
                     process_owner_listing_actions(owner_chat_id)
             process_due_photo_followups()
