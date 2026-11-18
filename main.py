@@ -128,7 +128,8 @@ def init_property_database():
             "photo_followup_1_sent_at": "TEXT",
             "photo_followup_2_due": "TEXT",
             "photo_followup_2_sent_at": "TEXT",
-            "photo_received_at": "TEXT"
+            "photo_received_at": "TEXT",
+            "photos_notification_sent_at": "TEXT"
         }
         for column, definition in migrations.items():
             if column not in existing_columns:
@@ -816,6 +817,22 @@ def process_owner_listing_actions(chat_id):
                 "UPDATE owner_properties SET photo_followup_1_due=?, photo_followup_2_due=NULL WHERE chat_id=?",
                 ((now + timedelta(hours=5, minutes=30)).isoformat(), str(chat_id))
             )
+        if photo_ids and row["photo_received_at"] is None and ADMIN_TELEGRAM_IDS:
+            photo_notice = (
+                "ФОТОГРАФИИ ПОЛУЧЕНЫ\n"
+                f"Объект собственника (Telegram chat ID: {row['chat_id']}). "
+                f"Количество фото: {len(photo_ids)}. Карточка дополнена."
+            )
+            try:
+                for admin_id in sorted(ADMIN_TELEGRAM_IDS):
+                    telegram_send(admin_id, photo_notice)
+                conn.execute(
+                    "UPDATE owner_properties SET photo_received_at=?, photos_notification_sent_at=? WHERE chat_id=?",
+                    (now.isoformat(), now.isoformat(), str(chat_id))
+                )
+                conn.commit()
+            except Exception as exc:
+                logging.error("Photo receipt admin notification failed: type=%s", type(exc).__name__)
         if row["lead_notified_at"]:
             return
         if not ADMIN_TELEGRAM_IDS:
