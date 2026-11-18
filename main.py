@@ -939,9 +939,18 @@ def process_due_photo_followups():
 
 
 def photo_followup_worker():
-    """Background scheduler; database claims prevent duplicate sends across workers."""
+    """Retry pending admin delivery and send due photo reminders in the background."""
     while True:
         try:
+            if ADMIN_TELEGRAM_IDS:
+                init_property_database()
+                with sqlite3.connect(MATVEY_DB_PATH, timeout=30) as conn:
+                    pending = [row[0] for row in conn.execute(
+                        "SELECT chat_id FROM owner_properties WHERE lead_notified_at IS NULL "
+                        "AND COALESCE(lead_notification_status,'pending')='pending'"
+                    ).fetchall()]
+                for owner_chat_id in pending:
+                    process_owner_listing_actions(owner_chat_id)
             process_due_photo_followups()
         except Exception as exc:
             logging.error("Photo follow-up worker error: type=%s", type(exc).__name__)
