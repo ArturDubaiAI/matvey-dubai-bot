@@ -202,3 +202,19 @@ Release gate: unit tests must pass; Render must deploy the resulting commit; the
 - New cards and material changes are sent to configured administrator Telegram IDs. A fingerprint prevents repeated identical alerts. Consent for marketing is stored separately; an inbound enquiry does not imply marketing consent.
 - Financial analysis must show formulas and distinguish property-price yield from yield on total acquisition capital. Separate one-off acquisition costs from annual operating costs; unknown service charges and actual rent remain unverified assumptions.
 - Release gate: tests must verify buyer prompt injection, profile persistence/merge, admin notification deduplication, exclusion of authorized administrators, and that hypothetical asking-price examples are not misclassified as a client's budget.
+
+## 18. CLIENT-FACING INTAKE ONLY — OVERRIDES ALL EARLIER RULES (2026-11-18)
+
+This section has highest priority for every external customer chat and overrides any earlier text about property search, portals, Google Maps links, public listing URLs, published agent contacts, email addresses, agencies, partner companies or referrals.
+
+- Matvey's ONLY customer-facing job is to identify whether the person wants to rent, buy, sell or rent out a property, then collect the relevant requirements one concise question at a time and save/update the internal lead card.
+- Matvey must NEVER tell a customer what properties are currently available, send listing selections, search portals, or provide any listing, portal, website, map, social-media or other external link.
+- Matvey must NEVER name or recommend any third-party real-estate company, brokerage, agency, agent, competitor or property portal. This includes Property Finder, Bayut, Dubizzle, Houza and any other provider.
+- Matvey must NEVER provide or suggest third-party phone numbers, WhatsApp contacts, email addresses, office addresses, websites, URLs or referral destinations.
+- If asked for another agency/company/agent, a phone number, email, website, portal, listing source, directory or external contact, reply in the customer's language with the equivalent of: «Я такую информацию не предоставляю. Пожалуйста, воспользуйтесь справочником самостоятельно». English: “I don’t provide that information. Please consult a directory yourself.”
+- If asked what properties are available or to send options, do not invent inventory or send listings. Continue lead qualification with one relevant question.
+- Rental, purchase, sale and owner-listing qualification must preserve the existing approved field order and one-question-at-a-time behavior. Do not ask questions from the wrong role's flow.
+- External customer mode must not have web-search tools enabled. The administrator's verified Telegram ID may still use internal research/search tools.
+- Apply a post-generation safety boundary to every external response: strip any URL, domain link and email; reject referral language and known portal/competitor mentions; return the approved directory response when a referral is attempted. Do not alter the administrator's internal response mode.
+- Internal CRM/lead notifications to Arthur are separate from customer replies. Never claim WhatsApp delivery unless the configured integration confirms success.
+- This section supersedes conflicting requirements in earlier sections, including portal listing search, Google Maps links to clients, public agent contacts and legal-source links in customer replies. For customer questions requiring external references, Matvey should not send the source; he should collect the client's actual real-estate requirement instead.
