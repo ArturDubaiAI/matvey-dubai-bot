@@ -457,3 +457,27 @@ class MatveyRuntimeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+    def test_free_fallback_collects_rental_lead_without_openai(self):
+        answer = main.free_mode_answer("Ищу квартиру в Dubai Marina", "free-client-1", "12345", language_code="ru")
+        self.assertIn("спален", answer.lower())
+        with sqlite3.connect(main.MATVEY_DB_PATH) as conn:
+            row = conn.execute("SELECT intent, requirements_json FROM client_leads WHERE chat_id=?", ("free-client-1",)).fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(row[0], "tenant_rent")
+        self.assertIn("Dubai Marina", row[1])
+
+    def test_free_fallback_handles_owner_rent(self):
+        answer = main.free_mode_answer("Сдаю квартиру в JVC", "free-owner-1", "12345", language_code="ru")
+        self.assertIn("Сколько", answer)
+        with sqlite3.connect(main.MATVEY_DB_PATH) as conn:
+            row = conn.execute("SELECT intent, requirements_json FROM client_leads WHERE chat_id=?", ("free-owner-1",)).fetchone()
+        self.assertEqual(row[0], "owner_rent")
+        self.assertIn("JVC", row[1])
+
+    def test_free_fallback_admin_does_not_create_client_lead(self):
+        answer = main.free_mode_answer("Проверь заявки", "admin-free-1", "12345", is_admin=True, language_code="ru")
+        self.assertIn("GPT отключён", answer)
+        with sqlite3.connect(main.MATVEY_DB_PATH) as conn:
+            row = conn.execute("SELECT 1 FROM client_leads WHERE chat_id=?", ("admin-free-1",)).fetchone()
+        self.assertIsNone(row)
+
