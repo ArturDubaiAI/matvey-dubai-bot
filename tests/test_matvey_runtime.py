@@ -413,7 +413,7 @@ class MatveyRuntimeTests(unittest.TestCase):
             "Dubai Land Department", "RERA", "Law No. 26 of 2007",
             "Law No. 33 of 2008", "Decree No. 43 of 2013",
             "gross yield", "net operating yield", "Mollak",
-            "Rental Disputes Center", "commercial", "escrow"
+            "Rental Disputes Center", "коммерческая недвижимость", "escrow"
         ):
             with self.subTest(required=required):
                 self.assertIn(required.lower(), knowledge.lower())
