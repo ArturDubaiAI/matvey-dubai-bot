@@ -256,6 +256,8 @@ class MatveyRuntimeTests(unittest.TestCase):
             main.telegram_send = original_send
 
     def test_photo_notification_retries_after_lead_was_already_delivered(self):
+        import sqlite3
+        import json
         original_api = main.TELEGRAM_API
         original_admins = main.ADMIN_TELEGRAM_IDS
         original_send = main.telegram_send
